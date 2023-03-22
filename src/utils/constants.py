@@ -1,22 +1,50 @@
 import os
 import numpy as np
+import argparse
 # hyper-parameters
-BATCH_SIZE = 64
-EPOCH      = 30
-LR         = 0.0005
-# mode selection
-INFERENCE_DEVICE = 'TEST_CUDA' # DEVICE: 'TEST_CUDA' or 'TEST_CPU'
-PATTERN          = 'TRAIN' # 'TRAIN' or 'TEST'
-DATASETS    = ['HAPT','Opportunity']
-DATASETS    = ['Opportunity']
-CLASSIFIERS = ['Deep_Sen_At_TCN_Cr_Br_At_Transformer_torch'] # LR 0.0001, 64
-cal_attitude_angle = True
-test_split = 50 # when testing, the testing dataset is seperated into 'test_split' pieces
+# BATCH_SIZE = 128
+# EPOCH      = 1
+# LR         = 0.0005
+# # mode selection
+# INFERENCE_DEVICE = 'TEST_CUDA' # DEVICE: 'TEST_CUDA' or 'TEST_CPU'
+# PATTERN          = 'TRAIN' # 'TRAIN' or 'TEST'
+# DATASETS    = ['HAPT','Opportunity']
+# DATASETS    = ['HAPT']
+# # CLASSIFIERS = ['If_ConvTransformer_W_torch'] # LR 0.0001, 64
+# CLASSIFIERS = ['If_ConvTransformer_torch'] # LR 0.0001, 64
+# cal_attitude_angle = True
+# test_split = 3 # when testing, the testing dataset is seperated into 'test_split' pieces
+
+def parse_args():
+    # The training options
+      parser = argparse.ArgumentParser(description='If_ConvTransformer')
+      
+      parser.add_argument('--PATTERN', type=str, default='TRAIN',
+                          help='pattern: TRAIN, TEST')
+      parser.add_argument('--DATASETS', type=str, default='Opportunity',
+                          help='dataset name: HAPT, Opportunity')
+      parser.add_argument('--CLASSIFIERS', type=str, default='If_ConvTransformer_W_torch',
+                          help='classifier name: If_ConvTransformer_torch, If_ConvTransformer_W_torch')
+      parser.add_argument('--BATCH_SIZE', type=int, default=128,
+                          help='training batch size: Oppo: 64 HAPT: 128')
+      parser.add_argument('--EPOCH', type=int, default=1,
+                          help='training epoches: HAPT: 30, Oppo: 100')
+      parser.add_argument('--LR', type=float, default=0.0002,
+                          help='learning rate: HAPT: 0.0002, Oppo: 0.0005')
+      parser.add_argument('--cal_attitude_angle', type=bool, default=True,
+                          help='correct the rotation angle')
+      parser.add_argument('--test_split', type=int, default=50,
+                          help='the testing dataset is seperated into test_split pieces in the inference process')
+      parser.add_argument('--INFERENCE_DEVICE', type=str, default='TEST_CUDA',
+                          help='inference device: TEST_CUDA, TEST_CPU')
+      
+      args = parser.parse_args()
+      return args
 
 def get_HAPT_dataset_param(CUR_DIR, dataset_name):
     
     (filepath, _) = os.path.split(CUR_DIR)
-    DATA_DIR = filepath + '\\dataset\\有用UCI HAPT\\数据集\\HAPT_Dataset\\'
+    DATA_DIR = filepath + '\\dataset\\UCI HAPT\\HAPT_Dataset\\'
     MODELS_COMP_LOG_DIR = CUR_DIR + '\\logs\\'+ dataset_name +'\\classifiers_comparison\\'
     ACT_LABELS = ["WALKING", "WALKING_UPSTAIRS", "WALKING_DOWNSTAIRS", 
                   "SITTING", "STANDING", "LAYING", 
@@ -40,7 +68,7 @@ def get_HAPT_dataset_param(CUR_DIR, dataset_name):
 def get_Opportunity_dataset_param(CUR_DIR, dataset_name):
     
     (filepath, _)       = os.path.split(CUR_DIR)
-    DATA_DIR            = filepath + '\\dataset\\有用Opportunity\\'
+    DATA_DIR            = filepath + '\\dataset\\Opportunity\\'
     MODELS_COMP_LOG_DIR = CUR_DIR + '\\logs\\'+ dataset_name +'\\classifiers_comparison\\'
     SUBJECTS                = [1,2,3,4]
     TRIALS                  = [1,2,3,4,5]
@@ -66,16 +94,16 @@ def get_Opportunity_dataset_param(CUR_DIR, dataset_name):
 def create_classifier(dataset_name, classifier_name, input_channel, POS_NUM,
                       data_length, nb_classes):
     
-    if classifier_name=='Deep_Sensor_Attn_TCN_Transformer_torch': 
-        from classifiers import Deep_Sensor_Attn_TCN_Transformer_torch
+    if classifier_name=='If_ConvTransformer_torch': 
+        from classifiers import If_ConvTransformer_torch
         # __init__(self, input_2Dfeature_channel, input_channel, feature_channel,
         #          kernel_size, kernel_size_grav, scale_num, feature_channel_out,
         #          multiheads, drop_rate, dataset_name, data_length, num_class)
-        return Deep_Sensor_Attn_TCN_Transformer_torch.Deep_Sensor_Attn_TCN_Transformer(1, input_channel, 64, 5, 3, 2, 128, 1, 0.2, dataset_name, data_length, nb_classes), Deep_Sensor_Attn_TCN_Transformer_torch
+        return If_ConvTransformer_torch.If_ConvTransformer(1, input_channel, 64, 5, 3, 2, 128, 1, 0.2, dataset_name, data_length, nb_classes), If_ConvTransformer_torch
     
-    if classifier_name=='Deep_Sen_At_TCN_Cr_Br_At_Transformer_torch': 
-        from classifiers import Deep_Sen_At_TCN_Cr_Br_At_Transformer_torch
+    if classifier_name=='If_ConvTransformer_W_torch': 
+        from classifiers import If_ConvTransformer_W_torch
         # __init__(self, input_2Dfeature_channel, input_channel, feature_channel,
         #          kernel_size, kernel_size_grav, scale_num, feature_channel_out,
         #          multiheads, drop_rate, dataset_name, data_length, num_class)
-        return Deep_Sen_At_TCN_Cr_Br_At_Transformer_torch.Deep_Sen_At_TCN_Cr_Br_At_Transformer(1, input_channel, 64, 5, 3, 2, 128, 1, 0.2, dataset_name, data_length, nb_classes), Deep_Sen_At_TCN_Cr_Br_At_Transformer_torch
+        return If_ConvTransformer_W_torch.If_ConvTransformer_W(1, input_channel, 64, 5, 3, 2, 128, 1, 0.2, dataset_name, data_length, nb_classes), If_ConvTransformer_W_torch

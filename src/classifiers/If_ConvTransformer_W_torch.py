@@ -49,13 +49,13 @@ class SelfAttention(nn.Module):
     def __init__(self, k, heads = 8, drop_rate = 0):
         super(SelfAttention, self).__init__()
         self.k, self.heads = k, heads
-        # input 维度为k（embedding结果），map成一个k*heads维度的矩阵
+        # map k-dimentional input to k*heads dimentions
         self.tokeys    = nn.Linear(k, k * heads, bias = False)
         self.toqueries = nn.Linear(k, k * heads, bias = False)
         self.tovalues  = nn.Linear(k, k * heads, bias = False)
-        # 设置dropout
+        # set dropout
         self.dropout_attention = nn.Dropout(drop_rate)
-        # 在通过线性转换把维度压缩到 k
+        # squeeze dimention to k
         self.unifyheads = nn.Linear(heads * k, k)
         
     def forward(self, x):
@@ -65,16 +65,16 @@ class SelfAttention(nn.Module):
         queries = self.toqueries(x).view(b, t, h, k)
         keys    = self.tokeys(x).view(b, t, h, k)
         values  = self.tovalues(x).view(b, t, h, k)
-        # 把 head 压缩进 batch的dimension
+        # squeeze head into batch dimension
         queries = queries.transpose(1, 2).contiguous().view(b * h, t, k)
         keys    = keys.transpose(1, 2).contiguous().view(b * h, t, k)
         values  = values.transpose(1, 2).contiguous().view(b * h, t, k)
-        # 这等效于对点积进行normalize
+        # normalize the dot products
         queries = queries / (k ** (1/4))
         keys = keys / (k ** (1/4))
-        # 矩阵相乘
+        # matrix multiplication
         dot  = torch.bmm(queries, keys.transpose(1,2))
-        # 进行softmax归一化
+        # softmax normalization
         dot = F.softmax(dot, dim=2)
         dot = self.dropout_attention(dot)
         out = torch.bmm(dot, values).view(b, h, t, k)
@@ -83,31 +83,77 @@ class SelfAttention(nn.Module):
         
         return self.unifyheads(out) # (b, t, k)
 
+def conv1d(ni: int, no: int, ks: int = 1, stride: int = 1, padding: int = 0, bias: bool = False):
+    """
+    Create and initialize a `nn.Conv1d` layer with spectral normalization.
+    """
+    conv = nn.Conv1d(ni, no, ks, stride=stride, padding=padding, bias=bias)
+    nn.init.kaiming_normal_(conv.weight)
+    if bias:
+        conv.bias.data.zero_()
+    # return spectral_norm(conv)
+    return conv
+
+class SelfAttention_Branch(nn.Module):
+    
+    def __init__(self, n_channels: int, drop_rate = 0, div = 1):
+        super(SelfAttention_Branch, self).__init__()
+
+        self.n_channels = n_channels
+
+        if n_channels > 1:
+            self.query = conv1d(n_channels, n_channels//div)
+            self.key = conv1d(n_channels, n_channels//div)
+        else:
+            self.query = conv1d(n_channels, n_channels)
+            self.key = conv1d(n_channels, n_channels)
+        self.value = conv1d(n_channels, n_channels)
+        self.dropout_attention = nn.Dropout(drop_rate)
+        self.gamma = nn.Parameter(torch.tensor([0.]))
+
+    def forward(self, x):
+        
+        x = x.permute(0,2,1)
+        size = x.size()
+        x = x.view(*size[:2], -1)
+        f, g, h = (self.query(x) / (self.n_channels ** (1/4))), (self.key(x) / (self.n_channels ** (1/4))), self.value(x)
+        beta = F.softmax(torch.bmm(f.permute(0, 2, 1).contiguous(), g), dim=1)
+        beta = self.dropout_attention(beta)
+        o = self.gamma * torch.bmm(h, beta) + x
+        return o.view(*size).contiguous().permute(0,2,1)
+
 class TransformerBlock(nn.Module):
     def __init__(self, k, heads, drop_rate):
         super(TransformerBlock, self).__init__()
 
         self.attention = SelfAttention(k, heads = heads, drop_rate = drop_rate)
-        self.norm1 = nn.LayerNorm(k)
+        # self.norm1 = nn.LayerNorm(k)
+        self.norm1 = nn.BatchNorm1d(k)
 
         self.mlp = nn.Sequential(
             nn.Linear(k, 4*k),
             nn.ReLU(),
             nn.Linear(4*k, k)
         )
-        self.norm2 = nn.LayerNorm(k)
+        # self.norm2 = nn.LayerNorm(k)
+        self.norm2 = nn.BatchNorm1d(k)
         self.dropout_forward = nn.Dropout(drop_rate)
 
     def forward(self, x):
         
-        # 先做self-attention
+        # perform self-attention
         attended = self.attention(x)
-        # 再做layer norm
-        x = self.norm1(attended + x)
-        # feedforward和layer norm
+        attended = attended + x
+        attended = attended.permute(0,2,1)
+        # perform layer norm
+        x = self.norm1(attended).permute(0,2,1)
+        # feedforward and layer norm
         feedforward = self.mlp(x)
         
-        return self.dropout_forward(self.norm2(feedforward + x))
+        feedforward = feedforward + x
+        feedforward = feedforward.permute(0,2,1)
+        
+        return self.dropout_forward(self.norm2(feedforward).permute(0,2,1))
 
 class Chomp2d(nn.Module):
     def __init__(self, chomp_size):
@@ -132,21 +178,17 @@ class IMU_Fusion_Block(nn.Module):
         for i in range(self.scale_num):
             
             dilation_num_grav = i+1
-#            padding_grav = (kernel_size_grav - 1) * dilation_num_grav // 2
-#            kernel_size_gyro = padding_grav*2-1
-#            kernel_size_acc = padding_grav*2+1
-            padding_grav     = (kernel_size_grav - 1) * dilation_num_grav
-            kernel_size_gyro = padding_grav
-            kernel_size_acc  = padding_grav + 1
+            
+            padding_grav      = (kernel_size_grav - 1) * dilation_num_grav
+            kernel_size_gyro  = padding_grav
+            kernel_size_acc   = padding_grav + 1
             
             tcn_grav = nn.Sequential(
                 weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
                                       (1,kernel_size_grav), 1, (0,padding_grav), 
                                       dilation=dilation_num_grav)),
-                # nn.BatchNorm2d(feature_channel),
                 Chomp2d(padding_grav),
                 nn.ReLU(),
-                # nn.MaxPool2d(2)
                 )
             
             
@@ -155,29 +197,23 @@ class IMU_Fusion_Block(nn.Module):
                     weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
                                           (1,1), 1, (0,0), 
                                           dilation=1)),
-                    # nn.BatchNorm2d(feature_channel),
                     nn.ReLU(),
-                    # nn.MaxPool2d(2)
                     )
             else:
                 tcn_gyro = nn.Sequential(
                     weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
                                           (1,kernel_size_gyro), 1, (0,(kernel_size_gyro-1)*1), 
                                           dilation=1)),
-                    # nn.BatchNorm2d(feature_channel),
                     Chomp2d((kernel_size_gyro-1)*1),
                     nn.ReLU(),
-                    # nn.MaxPool2d(2)
                     )
             
             tcn_acc = nn.Sequential(
                 weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
                                       (1,kernel_size_acc), 1, (0,(kernel_size_acc-1)*1), 
                                       dilation=1)),
-                # nn.BatchNorm2d(feature_channel),
                 Chomp2d((kernel_size_acc-1)*1),
                 nn.ReLU(),
-                # nn.MaxPool2d(2)
                 )
             
             setattr(self, 'tcn_grav_convs%i' % i, tcn_grav)
@@ -189,12 +225,8 @@ class IMU_Fusion_Block(nn.Module):
         
         self.attention = nn.Sequential(
                 nn.Linear(3*feature_channel, 1),
-                nn.Tanh()
-                )
-        
-        self.attention_scale = nn.Sequential(
-                nn.Linear(3*feature_channel, 1),
-                nn.Tanh()
+                # nn.Tanh()
+                nn.PReLU()
                 )
         
     def forward(self, x):
@@ -202,12 +234,12 @@ class IMU_Fusion_Block(nn.Module):
         x_grav = x[:,:,0:3,:]
         x_gyro = x[:,:,3:6,:]
         x_acc  = x[:,:,6:9,:]
-        
+    
         for i in range(self.scale_num):
             
             out_grav = self.tcn_grav_convs[i](x_grav).unsqueeze(4)
             out_gyro = self.tcn_gyro_convs[i](x_gyro).unsqueeze(4)
-            out_acc  = self.tcn_acc_convs[i](x_acc).unsqueeze(4)
+            out_acc  = self.tcn_acc_convs[i](x_acc)
             
             if i == 0:
                 out_attitude = torch.cat([out_grav, out_gyro], dim=4)
@@ -215,10 +247,8 @@ class IMU_Fusion_Block(nn.Module):
             else:
                 out_attitude = torch.cat([out_attitude, out_grav], dim=4)
                 out_attitude = torch.cat([out_attitude, out_gyro], dim=4)
-                out_dynamic  = torch.cat([out_dynamic, out_acc], dim=4)
-                # out_attitude = out_attitude + (out_grav + out_gyro)
-                # out_dynamic  = out_dynamic + out_acc
-        
+                out_dynamic  = torch.cat([out_dynamic, out_acc], dim=2)
+                
         # (batch_size, time_length, sensor_num*scale_num, 3(xyz), feature_chnnl)
         out_attitude = out_attitude.permute(0,3,4,2,1)
         # (batch_size, time_length, sensor_num*scale_num, 3(xyz)*feature_chnnl)
@@ -227,36 +257,21 @@ class IMU_Fusion_Block(nn.Module):
         sensor_attn  = self.attention(out_attitude).squeeze(3)
         sensor_attn  = F.softmax(sensor_attn, dim=2).unsqueeze(-1)
         out_attitude = sensor_attn * out_attitude
+        
+        # used for normalization
+        norm_num     = torch.mean(sensor_attn.squeeze(-1), dim=1)
+        norm_num     = torch.pow(norm_num, 2)
+        norm_num     = torch.sqrt(torch.sum(norm_num, dim=1))
+        norm_num     = (pow(self.scale_num,0.5)/norm_num).unsqueeze(1).unsqueeze(2).unsqueeze(3)
+        
+        out_attitude = out_attitude * norm_num
+        
         # (batch_size, time_length, sensor_num*scale_num, 3(xyz), feature_chnnl)
         out_attitude = out_attitude.reshape(out_attitude.shape[0], out_attitude.shape[1], out_attitude.shape[2], 3, -1)
         # (batch_size, time_length, sensor_num*scale_num*3(xyz), feature_chnnl)
         out_attitude = out_attitude.reshape(out_attitude.shape[0], out_attitude.shape[1], out_attitude.shape[2]*3, -1)
         # (batch_size, feature_chnnl, sensor_num*scale_num*3(xyz), time_length)
         out_attitude = out_attitude.permute(0,3,2,1)
-        
-#        # plus all the different scales
-#        out_attitude = torch.split(out_attitude, 3, dim=2)
-#        for j in range(len(out_attitude)):
-#            if j == 0:
-#                sum_attitude = out_attitude[j]
-#            else:
-#                sum_attitude = sum_attitude + out_attitude[j]
-#        out_attitude = sum_attitude
-        
-        # (batch_size, time_length, scale_num, 3(xyz), feature_chnnl)
-        out_dynamic = out_dynamic.permute(0,3,4,2,1)
-        # (batch_size, time_length, scale_num, 3(xyz)*feature_chnnl)
-        out_dynamic = out_dynamic.reshape(out_dynamic.shape[0], out_dynamic.shape[1], out_dynamic.shape[2], -1)
-        # time-step-wise sensor attention, scale_attn:(batch_size, time_length, scale_num, 1)
-        scale_attn  = self.attention_scale(out_dynamic).squeeze(3)
-        scale_attn  = F.softmax(scale_attn, dim=2).unsqueeze(-1)
-        out_dynamic = scale_attn * out_dynamic
-        # (batch_size, time_length, scale_num, 3(xyz), feature_chnnl)
-        out_dynamic = out_dynamic.reshape(out_dynamic.shape[0], out_dynamic.shape[1], out_dynamic.shape[2], 3, -1)
-        # (batch_size, time_length, scale_num*3(xyz), feature_chnnl)
-        out_dynamic = out_dynamic.reshape(out_dynamic.shape[0], out_dynamic.shape[1], out_dynamic.shape[2]*3, -1)
-        # (batch_size, feature_chnnl, scale_num*3(xyz), time_length)
-        out_dynamic = out_dynamic.permute(0,3,2,1)
         
         # concatenate all the different scales
         out_attitude = torch.split(out_attitude, 6, dim=2)
@@ -276,190 +291,57 @@ class IMU_Fusion_Block(nn.Module):
         out          = torch.cat([out_attitude, out_dynamic], dim = 2)
         
         return out, sensor_attn
-    
-class IMU_Fusion_Block_With_Mag(nn.Module):
-    def __init__(self, input_2Dfeature_channel, input_channel, 
-                 feature_channel, kernel_size_grav,
-                 scale_num, dataset_name):
-        super(IMU_Fusion_Block_With_Mag, self).__init__()
-        
-        self.scale_num         = scale_num
-        self.input_channel     = input_channel
-        self.tcn_grav_convs    = []
-        self.tcn_mag_convs     = []
-        self.tcn_gyro_convs    = []
-        self.tcn_acc_convs     = []
-        
-        for i in range(self.scale_num):
-            
-            dilation_num_grav = i+1
-#            padding_grav = (kernel_size_grav - 1) * dilation_num_grav // 2
-#            kernel_size_gyro = padding_grav*2-1
-#            kernel_size_acc = padding_grav*2+1
-            padding_grav     = (kernel_size_grav - 1) * dilation_num_grav
-            kernel_size_gyro = padding_grav
-            kernel_size_acc  = padding_grav + 1
-            
-            tcn_grav = nn.Sequential(
-                weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
-                                      (1,kernel_size_grav), 1, (0,padding_grav), 
-                                      dilation=dilation_num_grav)),
-                # nn.BatchNorm2d(feature_channel),
-                Chomp2d(padding_grav),
-                nn.ReLU(),
-                # nn.MaxPool2d(2)
-                )
-            
-            tcn_mag = nn.Sequential(
-            # the mag kernel params are the same with tcn_grav
-            weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
-                                  (1,kernel_size_grav), 1, (0,padding_grav), 
-                                  dilation=dilation_num_grav)),
-            # nn.BatchNorm2d(feature_channel),
-            Chomp2d(padding_grav),
-            nn.ReLU(),
-            # nn.MaxPool2d(2)
-            )
-            
-            if kernel_size_gyro == 1:
-                tcn_gyro = nn.Sequential(
-                    weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
-                                          (1,1), 1, (0,0), 
-                                          dilation=1)),
-                    # nn.BatchNorm2d(feature_channel),
-                    nn.ReLU(),
-                    # nn.MaxPool2d(2)
-                    )
-            else:
-                tcn_gyro = nn.Sequential(
-                    weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
-                                          (1,kernel_size_gyro), 1, (0,(kernel_size_gyro-1)*1), 
-                                          dilation=1)),
-                    # nn.BatchNorm2d(feature_channel),
-                    Chomp2d((kernel_size_gyro-1)*1),
-                    nn.ReLU(),
-                    # nn.MaxPool2d(2)
-                    )
-            
-            tcn_acc = nn.Sequential(
-                weight_norm(nn.Conv2d(input_2Dfeature_channel, feature_channel, 
-                                      (1,kernel_size_acc), 1, (0,(kernel_size_acc-1)*1), 
-                                      dilation=1)),
-                # nn.BatchNorm2d(feature_channel),
-                Chomp2d((kernel_size_acc-1)*1),
-                nn.ReLU(),
-                # nn.MaxPool2d(2)
-                )
-            
-            setattr(self, 'tcn_grav_convs%i' % i, tcn_grav)
-            self.tcn_grav_convs.append(tcn_grav)
-            setattr(self, 'tcn_mag_convs%i' % i, tcn_mag)
-            self.tcn_mag_convs.append(tcn_mag)
-            setattr(self, 'tcn_gyro_convs%i' % i, tcn_gyro)
-            self.tcn_gyro_convs.append(tcn_gyro)
-            setattr(self, 'tcn_acc_convs%i' % i, tcn_acc)
-            self.tcn_acc_convs.append(tcn_acc)
-        
-        self.attention = nn.Sequential(
-            # nn.Linear(3*feature_channel, 1),
-            nn.Linear(feature_channel, 1),
-            nn.Tanh()
-            )
-    
-    def forward(self, x):
-        
-        x_grav = x[:,:,0:3,:]
-        x_mag  = x[:,:,3:6,:]
-        x_gyro = x[:,:,6:9,:]
-        x_acc  = x[:,:,9:12,:]
-        
-        for i in range(self.scale_num):
-            
-            out_grav = self.tcn_grav_convs[i](x_grav)
-            out_mag  = self.tcn_mag_convs[i](x_mag)
-            out_gyro = self.tcn_gyro_convs[i](x_gyro)
-            out_acc  = self.tcn_acc_convs[i](x_acc)
-            
-            attitude           = torch.cat(out_grav, out_mag, dim=2)
-            attitude           = attitude.permute(0, 3, 2, 1)
-            attention_attitude = self.attention(attitude).squeeze()
-            attention_attitude = F.softmax(attention_attitude, dim=2).unsqueeze(-1)
-            attitude           = attitude * attention_attitude
-            attitude           = attitude.permute(0, 3, 2, 1)
-            out_grav           = torch.split(attitude, 2, dim=2)[0]
-            out_mag            = torch.split(attitude, 2, dim=2)[1]
-            
-            if i == 0:
-                out_attitude = out_grav + out_mag + out_gyro
-                out_dynamic  = out_acc
-            else:
-                out_attitude = torch.cat([out_attitude, (out_grav + out_mag + out_gyro)], dim=2)
-                out_dynamic  = torch.cat([out_dynamic, out_acc], dim=2)
-                # out_attitude = out_attitude + (out_grav + out_gyro)
-                # out_dynamic  = out_dynamic + out_acc
-        
-        out = torch.cat([out_attitude, out_dynamic], dim = 2)
-        
-        return out
-    
 
-class Deep_Sensor_Attn_TCN_Transformer(nn.Module):
+class If_ConvTransformer_W(nn.Module):
     def __init__(self, input_2Dfeature_channel, input_channel, feature_channel,
                  kernel_size, kernel_size_grav, scale_num, feature_channel_out,
                  multiheads, drop_rate, dataset_name, data_length, num_class):
         
-        super(Deep_Sensor_Attn_TCN_Transformer, self).__init__()
+        super(If_ConvTransformer_W, self).__init__()
+       
+        self.feature_channel  = feature_channel
+        self.scale_num        = scale_num
         
-        self.IMU_fusion_block = IMU_Fusion_Block(input_2Dfeature_channel, input_channel, feature_channel,
-                                                 kernel_size_grav, scale_num, dataset_name)
+        self.IMU_fusion_blocks     = []
+        for i in range(input_channel//9):
+            IMU_fusion_block   = IMU_Fusion_Block(input_2Dfeature_channel, input_channel, feature_channel,
+                                                  kernel_size_grav, scale_num, dataset_name)
+            setattr(self, 'IMU_fusion_blocks%i' % i, IMU_fusion_block)
+            self.IMU_fusion_blocks.append(IMU_fusion_block)
         
         self.conv2 = nn.Sequential(
             nn.Conv2d(feature_channel, feature_channel, (1,kernel_size), 1, (0,kernel_size//2)),
             nn.BatchNorm2d(feature_channel),
             nn.ReLU(),
-            # nn.MaxPool2d(2)
             )
         
         self.conv3 = nn.Sequential(
             nn.Conv2d(feature_channel, feature_channel, (1,kernel_size), 1, (0,kernel_size//2)),
             nn.BatchNorm2d(feature_channel),
             nn.ReLU(),
-            # nn.MaxPool2d(2)
             )
         
         self.conv4 = nn.Sequential(
             nn.Conv2d(feature_channel, feature_channel, (1,kernel_size), 1, (0,kernel_size//2)),
             nn.BatchNorm2d(feature_channel),
             nn.ReLU(),
-            # nn.MaxPool2d(2)
             )
-        
-        # self.conv5 = nn.Sequential(
-        #     nn.Conv2d(feature_channel, feature_channel, (1,kernel_size), 1, (0,kernel_size//2)),
-        #     nn.BatchNorm2d(feature_channel),
-        #     nn.ReLU(),
-        #     # nn.MaxPool2d(2)
-        #     )
-        
-        # self.conv6 = nn.Sequential(
-        #     nn.Conv2d(feature_channel, feature_channel, (1,kernel_size), 1, (0,kernel_size//2)),
-        #     nn.BatchNorm2d(feature_channel),
-        #     nn.ReLU(),
-        #     # nn.MaxPool2d(2)
-        #     )
         
         if input_channel  == 12:
             reduced_channel = 6
         else:
             reduced_channel = 3
         
+        self.norm_conv4  = nn.LayerNorm(feature_channel)
+
+        self.sa         = SelfAttention_Branch(feature_channel, drop_rate = drop_rate)
+
         self.transition = nn.Sequential(
-            nn.Conv1d(feature_channel*(input_channel-reduced_channel)*scale_num, feature_channel_out, 1, 1),
-#            nn.Conv1d(feature_channel*(input_channel-reduced_channel), feature_channel_out, 1, 1),
+            nn.Conv1d(feature_channel*(9-reduced_channel)*scale_num*input_channel//9, feature_channel_out, 1, 1),
             nn.BatchNorm1d(feature_channel_out),
             nn.ReLU()
             )
-        
+
         self.position_encode = PositionalEncoding(feature_channel_out, drop_rate, data_length)
         
         self.transformer_block1 = TransformerBlock(feature_channel_out, multiheads, drop_rate)
@@ -469,23 +351,40 @@ class Deep_Sensor_Attn_TCN_Transformer(nn.Module):
         self.global_ave_pooling = nn.AdaptiveAvgPool1d(1)
         
         self.linear = nn.Linear(feature_channel_out, num_class)
+        
+        self.register_buffer(
+            "centers", (torch.randn(num_class, feature_channel_out).cuda())
+        )
 
     def forward(self, x):
         
         # hidden = None
-        batch_size = x.shape[0]
-        feature_channel = x.shape[1]
-        input_channel = x.shape[2]
-        data_length = x.shape[-1]
+        batch_size      = x.shape[0]
+        input_channel   = x.shape[2]
+        data_length     = x.shape[-1]
+        IMU_num         = input_channel//9
+        x_input         = x
         
-        x, out_attn = self.IMU_fusion_block(x)
+        for i in range(IMU_num):
+            x_cur_IMU, cur_sensor_attn   = self.IMU_fusion_blocks[i](x_input[:,:,i*9:(i+1)*9,:])
+            if i == 0:
+                x        = x_cur_IMU
+                out_attn = cur_sensor_attn
+            else:
+                x        = torch.cat((x, x_cur_IMU), 2)
+                out_attn = torch.cat((out_attn, cur_sensor_attn), 2)
+        
         x = self.conv2(x)
         x = self.conv3(x)
-        x = self.conv4(x)
-        # x = self.conv5(x)
-        # x = self.conv6(x)
+        x = self.conv4(x) # [batch_size, fea_dims, sensor_chnnl, data_len]
         
-        x = x.view(batch_size, -1, data_length)
+        x = x.permute(0, 3, 2, 1)
+        x = self.norm_conv4(x).permute(0, 3, 2, 1)
+        
+        x = x.permute(0,3,2,1).reshape(batch_size*data_length, -1, self.feature_channel)
+        x = self.sa(x).reshape(batch_size, data_length, -1, self.feature_channel)
+        x = x.permute(0,3,2,1).reshape(batch_size, -1, data_length)
+        
         x = self.transition(x)
         
         x = self.position_encode(x)
@@ -495,15 +394,134 @@ class Deep_Sensor_Attn_TCN_Transformer(nn.Module):
         x = self.transformer_block2(x)
         x = x.permute(0,2,1)
         
-        x = self.global_ave_pooling(x).squeeze()
+        x = self.global_ave_pooling(x).squeeze(-1)
+        
+        z = x.div(
+            torch.norm(x, p=2, dim=1, keepdim=True).expand_as(x)
+        )
         
         output = self.linear(x)
         
-        return output, out_attn
+        return output, z
     
+def init_weights_orthogonal(m):
+    """
+    Orthogonal initialization of layer parameters
+    :param m:
+    :return:
+    """
+    if type(m) == nn.LSTM or type(m) == nn.GRU:
+        for name, param in m.named_parameters():
+            if "weight_ih" in name:
+                nn.init.orthogonal_(param.data)
+            elif "weight_hh" in name:
+                nn.init.orthogonal_(param.data)
+            elif "bias" in name:
+                param.data.fill_(0)
+
+    elif type(m) == nn.Conv2d or type(m) == nn.Linear:
+        nn.init.orthogonal_(m.weight)
+        # m.bias.data.fill_(0)
+
+class MixUpLoss(nn.Module):
+
+    def __init__(self, crit, reduction='mean'):
+        super().__init__()
+        if hasattr(crit, 'reduction'):
+            self.crit = crit
+            self.old_red = crit.reduction
+            setattr(self.crit, 'reduction', 'none')
+        self.reduction = reduction
+
+    def forward(self, output, target):
+        if len(target.size()) == 2:
+            loss1, loss2 = self.crit(output, target[:, 0].long()), self.crit(output, target[:, 1].long())
+            d = loss1 * target[:, 2] + loss2 * (1 - target[:, 2])
+        else:
+            d = self.crit(output, target)
+        if self.reduction == 'mean':
+            return d.mean()
+        elif self.reduction == 'sum':
+            return d.sum()
+        return d
+
+    def get_old(self):
+        if hasattr(self, 'old_crit'):
+            return self.old_crit
+        elif hasattr(self, 'old_red'):
+            setattr(self.crit, 'reduction', self.old_red)
+            return self.crit
+
+def mixup_data(x, y, alpha=0.4):
+
+    """
+    Returns mixed inputs, pairs of targets, and lambda
+    """
+
+    batch_size = x.shape[0]
+    lam = np.random.beta(alpha, alpha, batch_size)
+    # t = max(t, 1-t)
+    lam = np.concatenate([lam[:, None], 1 - lam[:, None]], 1).max(1)
+    # tensor and cuda version of lam
+    lam = x.new(lam)
+
+    shuffle = torch.randperm(batch_size).cuda()
+
+    x1, y1 = x[shuffle], y[shuffle]
+    # out_shape = [bs, 1, 1]
+    out_shape = [lam.size(0)] + [1 for _ in range(len(x1.shape) - 1)]
+
+    # [bs, temporal, sensor]
+    mixed_x = (x * lam.view(out_shape) + x1 * (1 - lam).view(out_shape))
+    # [bs, 3]
+    y_a_y_b_lam = torch.cat([y[:, None].float(), y1[:, None].float(), lam[:, None].float()], 1)
+
+    return mixed_x, y_a_y_b_lam
+
+def compute_center_loss(features, centers, targets):
+
+    features = features.view(features.size(0), -1)
+    target_centers = centers[targets]
+    criterion = torch.nn.MSELoss()
+    center_loss = criterion(features, target_centers)
+    return center_loss
+
+
+def get_center_delta(features, centers, targets, alpha):
+    # implementation equation (4) in the center-loss paper
+    features = features.view(features.size(0), -1)
+    targets, indices = torch.sort(targets)
+    target_centers = centers[targets]
+    features = features[indices]
+
+    delta_centers = target_centers - features
+    uni_targets, indices = torch.unique(
+            targets.cpu(), sorted=True, return_inverse=True)
+
+    uni_targets = uni_targets.cuda()
+    indices = indices.cuda()
+
+    delta_centers = torch.zeros(
+        uni_targets.size(0), delta_centers.size(1)
+    ).cuda().index_add_(0, indices, delta_centers)
+
+    targets_repeat_num = uni_targets.size()[0]
+    uni_targets_repeat_num = targets.size()[0]
+    targets_repeat = targets.repeat(
+            targets_repeat_num).view(targets_repeat_num, -1)
+    uni_targets_repeat = uni_targets.unsqueeze(1).repeat(
+            1, uni_targets_repeat_num)
+    same_class_feature_count = torch.sum(
+            targets_repeat == uni_targets_repeat, dim=1).float().unsqueeze(1)
+
+    delta_centers = delta_centers / (same_class_feature_count + 1.0) * alpha
+    result = torch.zeros_like(centers)
+    result[uni_targets, :] = delta_centers
+    return result
+
 def train_op(network, EPOCH, BATCH_SIZE, LR,
-             train_x, train_y, val_x, val_y, X_test, y_test,
-             output_directory_models, log_training_duration, test_split):
+              train_x, train_y, val_x, val_y, X_test, y_test,
+              output_directory_models, log_training_duration, test_split):
     # prepare training_data
     if train_x.shape[0] % BATCH_SIZE == 1:
         drop_last_flag = True
@@ -514,7 +532,7 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
                                     batch_size = BATCH_SIZE,
                                     shuffle = True,
                                     drop_last = drop_last_flag
-                                   )
+                                    )
     
     # init lr&train&test loss&acc log
     lr_results = []
@@ -531,34 +549,29 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     macro_f1_test_results       = []
     
     # prepare optimizer&scheduler&loss_function
-    parameters = ContiguousParams(network.parameters())
-    optimizer = torch.optim.Adam(parameters.contiguous(),lr = LR)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, 
-                                                           patience=5,
-                                                           min_lr=LR/10, verbose=True)
-    # loss_function = nn.CrossEntropyLoss(reduction='sum')
-    loss_function = LabelSmoothingCrossEntropy()
+    network.apply(init_weights_orthogonal)
+    parameters = network.parameters()
+    optimizer = torch.optim.Adam(parameters,lr = LR)
+    scheduler = torch.optim.lr_scheduler.StepLR(
+                    optimizer, step_size=10, gamma=0.9)
+    criterion = nn.CrossEntropyLoss(reduction='sum')
+    # loss_function = LabelSmoothingCrossEntropy()
     
     # save init model    
     output_directory_init = output_directory_models+'init_model.pkl'
     torch.save(network.state_dict(), output_directory_init)   # save only the init parameters
     
-    # inputs = torch.randn(1, 1, 9, 128).cuda()
-    # flops, paras = profile(network, inputs = (inputs))
-    # flops, paras = clever_format([flops, paras], "%.3f")
-    # print(flops, paras)
-    # exit()
-    
     training_duration_logs = []
     start_time = time.time()
+    
+    # super param
+    mixup = True
+    alpha = 0.8
+    beta  = 0.0003
+    lr_cent = 0.001
+    #############
+    
     for epoch in range (EPOCH):
-        
-        epoch_tau = epoch+1
-        tau = max(1 - (epoch_tau - 1) / 50, 0.5)
-        for m in network.modules():
-            if hasattr(m, '_update_tau'):
-                m._update_tau(tau)
-                # print(a)
         
         for step, (x,y) in enumerate(train_loader):
             
@@ -566,26 +579,44 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
             
             batch_x = x.cuda()
             batch_y = y.cuda()
-            output_bc = network(batch_x)[0]
             
-            # cal the sum of pre loss per batch 
-            loss = loss_function(output_bc, batch_y)
+            centers = network.centers
+            
+            if mixup == True:
+                batch_x, batch_y_mixup = mixup_data(batch_x, batch_y, alpha)
+            
+            logits, z            = network(batch_x)
+            
+            # cal the sum of pre loss per batch
+            if mixup == True:
+                loss_function    = MixUpLoss(criterion)
+                loss             = loss_function(logits, batch_y_mixup)
+            else:
+                loss             = criterion(logits, batch_y)
+            
+            center_loss      = compute_center_loss(z, centers, batch_y)
+            loss             = loss + beta * center_loss
+            
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            
+            center_deltas     = get_center_delta(z.data, centers, batch_y, lr_cent)
+            network.centers   = centers - center_deltas
+    
+            if mixup == True:
+                loss_function = loss_function.get_old()
         
         # test per epoch
         network.eval()
-        test_flag = True
         # loss_train:loss of training set; accuracy_train:pre acc of training set
-        loss_train, accuracy_train, _ = get_test_loss_acc(network, loss_function, train_x, train_y, test_split)
-        loss_validation, accuracy_validation, macro_f1_val = get_test_loss_acc(network, loss_function, val_x, val_y, test_split)
-        loss_test, accuracy_test, macro_f1_test = get_test_loss_acc(network, loss_function, X_test, y_test, test_split)
-        test_flag = False
-        network.train()
+        loss_train, accuracy_train, _ = get_test_loss_acc(network, criterion, train_x, train_y, test_split)
+        loss_validation, accuracy_validation, macro_f1_val = get_test_loss_acc(network, criterion, val_x, val_y, test_split)
+        loss_test, accuracy_test, macro_f1_test = get_test_loss_acc(network, criterion, X_test, y_test, test_split)
+        network.train()  
         
         # update lr
-        scheduler.step(accuracy_validation)
+        scheduler.step()
         lr = optimizer.param_groups[0]['lr']
         
         ######################################dropout#####################################

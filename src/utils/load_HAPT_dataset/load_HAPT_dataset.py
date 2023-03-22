@@ -7,10 +7,6 @@ import pandas as pd
 
 from utils.load_HAPT_dataset.preprocess_raw_data import preprocess_raw_data
 
-# CUR_DIR = os.path.dirname(os.path.abspath(__file__))  # Path to current directory
-# DATA_DIR = os.path.join(CUR_DIR, "../../data")
-# DATA_DIR = 'F:\\Activity recogniton\\数据集\\数据集\\有用UCI HAPT\\数据集\\HAPT Data Set为UCI HAR数据集的更新版\\'
-
 
 def load_features(CUR_DIR, DATA_DIR) -> Tuple[
     pd.DataFrame,

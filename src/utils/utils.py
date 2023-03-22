@@ -6,20 +6,24 @@ from collections import Counter
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
-from scipy.fftpack import fft
-from utils.constants import INFERENCE_DEVICE
+# from utils.constants import INFERENCE_DEVICE
+from utils.constants import parse_args
+args = parse_args()
+INFERENCE_DEVICE = args.INFERENCE_DEVICE
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
+# import seaborn as sns
 import shap
-# from tensorflow import keras
 import torch
 import torch.nn as nn
 import torch.utils.data as Data
 import time
 import torch.nn.functional as F
+from utils.constants import *
+from utils.load_HAPT_dataset.load_HAPT_dataset import load_HAPT_raw_data
+from utils.load_Opportunity_dataset.load_Opportunity_dataset import load_Opportunity_data
 
 from sklearn.metrics import (
     accuracy_score,
@@ -33,34 +37,54 @@ from sklearn.metrics import (
 shap.initjs()
 logger = getLogger(__name__)
 
+# load raw training and testing data of each dataset
+def load_raw_data(args, dataset_name, CUR_DIR):
+    # load raw data
+    if dataset_name == 'HAPT':
+        DATA_DIR, MODELS_COMP_LOG_DIR, ACT_LABELS, ActID, TRAIN_SUBJECTS_ID,\
+        TEST_SUBJECTS_ID, WINDOW_SIZE, OVERLAP, INPUT_CHANNEL, POS_NUM,\
+        separate_gravity_flag = get_HAPT_dataset_param(CUR_DIR,dataset_name)
+        
+        X_train, X_test, y_train, y_test, User_ids_train, User_ids_test,\
+            label2act, act2label = load_HAPT_raw_data(DATA_DIR, TRAIN_SUBJECTS_ID, ActID,
+                                                      WINDOW_SIZE, OVERLAP,separate_gravity_flag,
+                                                      args.cal_attitude_angle)
+    
+    elif dataset_name == 'Opportunity':
+        DATA_DIR, MODELS_COMP_LOG_DIR, SUBJECTS, TRIALS, SELEC_LABEL,\
+           ACT_LABELS, ActID, TRAIN_SUBJECTS_ID, TRAIN_SUBJECTS_TRIAL_ID, WINDOW_SIZE, OVERLAP,\
+           INPUT_CHANNEL, POS_NUM, separate_gravity_flag, to_NED_flag = get_Opportunity_dataset_param(CUR_DIR, dataset_name)
+        
+        X_train, X_test, y_train, y_test, User_ids_train, User_ids_test,\
+            label2act, act2label = load_Opportunity_data(DATA_DIR, SUBJECTS, TRIALS, SELEC_LABEL,
+                                                         TRAIN_SUBJECTS_ID, TRAIN_SUBJECTS_TRIAL_ID,
+                                                         ACT_LABELS, ActID, WINDOW_SIZE, OVERLAP,
+                                                         separate_gravity_flag, args.cal_attitude_angle,
+                                                         to_NED_flag)
+        
+        TEST_SUBJECTS_ID         = list(set(SUBJECTS) ^ set(TRAIN_SUBJECTS_ID))
+    
+    return X_train, X_test, y_train, y_test, User_ids_train, User_ids_test,\
+           label2act, act2label,\
+           ACT_LABELS, ActID, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID,\
+           MODELS_COMP_LOG_DIR, INPUT_CHANNEL, POS_NUM
 
-def color_generator(i: int) -> str:
-    l = ["#FFAF6D", "#DC4195", "#F1E898", "#6DCBB9", "#3E89C4", "#6F68CF"]
-    return l[i]
-
-
-def round_float(f: float, r: float = 0.000001) -> float:
-    return float(Decimal(str(f)).quantize(Decimal(str(r)), rounding=ROUND_HALF_UP))
-
-
-def round_list(l: List[float], r: float = 0.000001) -> List[float]:
-    return [round_float(f, r) for f in l]
-
-
-def round_dict(d: Dict[Any, Any], r: float = 0.000001) -> Dict[Any, Any]:
-    return {key: round(d[key], r) for key in d.keys()}
-
-
-def round(arg: Any, r: float = 0.000001) -> Any:
-    if type(arg) == float or type(arg) == np.float64 or type(arg) == np.float32:
-        return round_float(arg, r)
-    elif type(arg) == list or type(arg) == np.ndarray:
-        return round_list(arg, r)
-    elif type(arg) == dict:
-        return round_dict(arg, r)
-    else:
-        logger.error(f"Arg type {type(arg)} is not supported")
-        return arg
+# get the raw data for loso
+def get_raw_data(args, dataset_name, CUR_DIR):
+    
+    X_train, X_test, y_train, y_test, User_ids_train, User_ids_test,\
+        label2act, act2label,\
+        ACT_LABELS, ActID, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID,\
+        MODELS_COMP_LOG_DIR, INPUT_CHANNEL, POS_NUM = load_raw_data(args, dataset_name, CUR_DIR)
+    
+    All_data   = np.concatenate((X_train, X_test), axis = 0)
+    All_labels = np.concatenate((y_train, y_test))
+    All_users  = np.concatenate((User_ids_train, User_ids_test))
+    ALL_SUBJECTS_ID = list(set(TRAIN_SUBJECTS_ID + TEST_SUBJECTS_ID))
+    
+    return label2act, ACT_LABELS, ActID, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID,\
+           MODELS_COMP_LOG_DIR, INPUT_CHANNEL, POS_NUM, All_data, All_labels,\
+           All_users, ALL_SUBJECTS_ID
 
 def shuffle_trainset(X_train, y_train):
     
@@ -103,106 +127,6 @@ def check_class_balance(logger, y_train: np.ndarray, y_test: np.ndarray,
                 f"{label2act[label_id]} ({label_id}): {c[label_id]} samples ({c[label_id] / len_y * 100:.04} %)"
             )
 
-def plot_feature_importance(
-    models: List[Any],
-    num_features: int,
-    cols: List[str],
-    importance_type: str = "gain",
-    path: str = "importance.png",
-    figsize: Tuple[int, int] = (16, 10),
-    max_display: int = -1,
-) -> None:
-    """
-    Args:
-        importance_type: chosen from "gain" or "split"
-    """
-    importances = np.zeros((len(models), num_features))
-    for i, model in enumerate(models):
-        importances[i] = model.feature_importance(importance_type=importance_type)
-
-    importance = np.mean(importances, axis=0)
-    importance_df = pd.DataFrame({"Feature": cols, "Value": importance})
-    importance_df = importance_df.sort_values(by="Value", ascending=False)[:max_display]
-
-    plt.figure(figsize=figsize)
-    sns.barplot(x="Value", y="Feature", data=importance_df)
-    plt.title("Feature Importance (avg over folds)")
-    plt.tight_layout()
-    plt.savefig(path)
-    plt.close()
-
-def fft_transform(x, X_data, test_split):
-    
-    x_fft = fft(x)
-    # X_data.shape[1]:9, the channel num of all sensor data.||x.shape[2]:8, the lenth of each time_step
-    x_fft = x_fft.reshape([-1, X_data.shape[1], x.shape[1]])
-    # 变一下维度，这样后面reshape时，每个sensor的xyz在一起
-    if len(x_fft.shape) > 3:
-        x_fft = np.swapaxes(x_fft.squeeze(),1,2)
-    else:
-        x_fft = np.swapaxes(x_fft,1,2)
-    # split the data of different sensors
-    x_sensor_fft = np.split(x_fft, int(x_fft.shape[2]/3), axis=2)
-    x_all_sensor_fft = []
-    # flatten the data of each sensor data, then concat them on the rows
-    for i in range(len(x_sensor_fft)):
-        shape_flag = x_sensor_fft[i].shape
-        if i==0:
-            fft_flag = x_sensor_fft[i].reshape([shape_flag[0], shape_flag[1]*shape_flag[2]])
-            x_all_sensor_fft = fft_flag
-        else:
-            fft_flag = x_sensor_fft[i].reshape([shape_flag[0], shape_flag[1]*shape_flag[2]])
-            x_all_sensor_fft = np.concatenate((x_all_sensor_fft, fft_flag), axis=1)
-    # flatten the batch of real and imag values, get ready to merge them
-    x_all_sensor_fft_real = x_all_sensor_fft.real.reshape(x_all_sensor_fft.shape[0]*x_all_sensor_fft.shape[1],1)
-    x_all_sensor_fft_imag = x_all_sensor_fft.imag.reshape(x_all_sensor_fft.shape[0]*x_all_sensor_fft.shape[1],1)
-    # concat the real and imag values on the columns, then reshape to the batch size to merge the real and imag values:
-    x_merge_real_imag = np.concatenate((x_all_sensor_fft_real, x_all_sensor_fft_imag), axis=1)
-    # a real value following a imag value
-    x_merge_real_imag = x_merge_real_imag.reshape([x_all_sensor_fft.shape[0],-1])
-    
-    return x_merge_real_imag
-
-def STFT_transform(X_data, y_data, STFT_intervals, test_split):
-    
-    STFT_result = []
-    
-    X_data = X_data.squeeze()
-    torch_dataset = Data.TensorDataset(torch.FloatTensor(X_data), torch.tensor(y_data).long())
-    data_loader = Data.DataLoader(dataset = torch_dataset,
-                                  batch_size = X_data.shape[0] // test_split,
-                                  shuffle = False)
-    for step, (x,y) in enumerate(data_loader):
-        
-        x_split_merge_real_imag = []
-        
-        with torch.no_grad():
-            x = x.cpu().data.numpy()
-            if len(x.shape) == 2:
-                x = np.expand_dims(x, axis=0)
-            x = x.reshape([x.shape[0]*x.shape[1], x.shape[2]])
-            if x.shape[1]%STFT_intervals == 0:
-                x_split = np.split(x, STFT_intervals, axis=1)
-            else:
-                print('Please input a STFT_intervals value can be divided evently by data lenth:'+str(x.shape[1]))
-            # Do fft transform for every time_step, then concat all the time_steps
-            for time_step in range(len(x_split)):
-                
-                if time_step == 0:
-                    x_split_merge_real_imag = fft_transform(x_split[time_step], X_data, test_split)
-                    x_split_merge_real_imag = np.expand_dims(x_split_merge_real_imag, axis=1)
-                else:
-                    merge_cur_time_step = fft_transform(x_split[time_step], X_data, test_split)
-                    merge_cur_time_step = np.expand_dims(merge_cur_time_step, axis=1)
-                    x_split_merge_real_imag = np.concatenate((x_split_merge_real_imag, merge_cur_time_step), axis=1)
-    
-        if step == 0:
-            STFT_result = x_split_merge_real_imag
-        else:
-            STFT_result = np.concatenate((STFT_result, x_split_merge_real_imag), axis=0)
-    
-    return np.expand_dims(STFT_result, axis=1)
-
 def create_directory(directory_path): 
     if os.path.exists(directory_path): 
         return None
@@ -214,19 +138,19 @@ def create_directory(directory_path):
             return None 
         return directory_path
 
-def get_loso_train_test_data(SUBJECTS_IDS, All_users, All_data, All_labels):
-    for (r_id, sub_id) in enumerate(SUBJECTS_IDS):
-        if r_id == 0:
-            ids = np.where(All_users == sub_id)[0]
-        else:
-            ids = np.concatenate((ids, np.where(All_users == sub_id)[0]))
-    X = All_data[ids,:,:,:]
-    y = All_labels[ids]
-    return X, y
+# create the directory of the training model
+def create_model_direc(MODEL_DIR, PATTERN, subject_id):
+    
+    output_directory_models = MODEL_DIR+'\SUBJECT_'+str(subject_id)+'\\'
+    flag_output_directory_models = create_directory(output_directory_models)
+    if PATTERN == 'TRAIN':
+        flag_output_directory_models = PATTERN
+    
+    return output_directory_models, flag_output_directory_models
 
+# Logging settings
 def logging_settings(classifier_name, CUR_DIR, dataset_name):
     
-    # Logging settings
     EXEC_TIME = classifier_name + "-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     LOG_DIR = os.path.join(CUR_DIR, f"logs", dataset_name, classifier_name, f"{EXEC_TIME}")
     MODEL_DIR = os.path.join(CUR_DIR, f"saved_model", dataset_name, classifier_name)
@@ -256,33 +180,21 @@ def logging_settings(classifier_name, CUR_DIR, dataset_name):
     
     return EXEC_TIME, LOG_DIR, MODEL_DIR, logger
 
-# !!!the below annotated code save logs of different classifiers to only one log file
-# def logging_settings(classifier_name, CUR_DIR, dataset_name):
-    
-#     # Logging settings
-#     EXEC_TIME = classifier_name + "-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-#     LOG_DIR = os.path.join(CUR_DIR, f"logs", dataset_name, classifier_name, f"{EXEC_TIME}")
-#     MODEL_DIR = os.path.join(CUR_DIR, f"saved_model", dataset_name, classifier_name)
-#     create_directory(LOG_DIR) # Create log directory
-    
-#     formatter = "%(levelname)s: %(asctime)s: %(filename)s: %(funcName)s: %(message)s"
-#     basicConfig(filename=f"{LOG_DIR}/{EXEC_TIME}.log", level=DEBUG, format=formatter, filemode='w')
-#     mpl_logger = getLogger("matplotlib")  # Suppress matplotlib logging
-#     mpl_logger.setLevel(WARNING)
-    
-#     # Handle logging to both logging and stdout.
-#     getLogger().addHandler(StreamHandler(sys.stdout))
-    
-#     logger = getLogger(__name__)
-#     logger.setLevel(DEBUG)
-#     logger.debug(f"{LOG_DIR}/{EXEC_TIME}.log")
-    
-#     return EXEC_TIME, LOG_DIR, MODEL_DIR, logger
+# obtain the training and test data for loso
+def get_loso_train_test_data(SUBJECTS_IDS, All_users, All_data, All_labels):
+    for (r_id, sub_id) in enumerate(SUBJECTS_IDS):
+        if r_id == 0:
+            ids = np.where(All_users == sub_id)[0]
+        else:
+            ids = np.concatenate((ids, np.where(All_users == sub_id)[0]))
+    X = All_data[ids,:,:,:]
+    y = All_labels[ids]
+    return X, y
 
+# initialize evaluation variables of a dict
 def initialize_saving_variables(X_train, X_test, nb_classes, SUBJECT_NUM):
     
     # for test sets there are predictions for SUBJECT_NUM times
-    # test_preds = np.zeros((SUBJECT_NUM, X_test.shape[0], nb_classes))
     models = []
     scores: Dict[str, Dict[str, List[Any]]] = {
         "logloss": {"train": [], "valid": [], "test": []},
@@ -299,20 +211,51 @@ def initialize_saving_variables(X_train, X_test, nb_classes, SUBJECT_NUM):
     
     return models, scores, log_training_duration
 
+# obtain the network param number
 def get_parameter_number(net):
     total_num = sum(p.numel() for p in net.parameters())
     trainable_num = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print('Network_Total_Parameters:', total_num, 'Network_Trainable_Parameters:', trainable_num)
     return {'Total': total_num, 'Trainable': trainable_num}
 
+# create classifier object, get classifier param number
+def create_cuda_classifier(dataset_name, classifier_name, INPUT_CHANNEL, POS_NUM, data_length, nb_classes):
+    
+    classifier, classifier_func = create_classifier(dataset_name, classifier_name, INPUT_CHANNEL, POS_NUM,
+                                                    data_length, nb_classes)
+    if INFERENCE_DEVICE == 'TEST_CUDA':
+        classifier.cuda() # 这变了
+    print(classifier)
+    classifier_parameter = get_parameter_number(classifier)
+    
+    return classifier, classifier_func, classifier_parameter
+
+# obtain the output of the network
+def model_predict(net, x_data, y_data, test_split=1):
+    predict = [] 
+    output = []
+    torch_dataset = Data.TensorDataset(torch.FloatTensor(x_data), torch.tensor(y_data).long())
+    data_loader = Data.DataLoader(dataset = torch_dataset,
+                                  batch_size = x_data.shape[0] // test_split,
+                                  shuffle = False)    
+    for step, (x,y) in enumerate(data_loader):
+        with torch.no_grad():
+            if INFERENCE_DEVICE == 'TEST_CUDA':
+                x = x.cuda() # 这变了
+            output_bc = net(x)[0]
+            if len(output_bc.shape) == 1:
+                output_bc.unsqueeze_(dim=0)
+            out = output_bc.cpu().data.numpy()
+            output.extend(out)
+    return output
+
+# obtain the test results of the training, val and test datasets
 def predict_tr_val_test(network, nb_classes, LABELS,
                         train_x, val_x, test_x,
                         train_y, val_y, test_y,
                         scores, per_training_duration,
                         run_id, output_directory_models,
                         test_split):
-    
-    start = time.time()
     
     # generate network objects
     network_obj = network
@@ -324,8 +267,6 @@ def predict_tr_val_test(network, nb_classes, LABELS,
     pred_train = np.array(model_predict(network_obj, train_x, train_y, test_split))
     pred_valid = np.array(model_predict(network_obj, val_x, val_y, test_split))
     pred_test = np.array(model_predict(network_obj, test_x, test_y, test_split))
-    
-    end = time.time()
     
     # record the metrics of each subject, initialize the score per CV
     score: Dict[str, Dict[str, List[Any]]] = {
@@ -373,8 +314,9 @@ def predict_tr_val_test(network, nb_classes, LABELS,
                         test_y, pred_test,
                         output_directory_models)
     
-    return pred_train, pred_valid, pred_test, scores, (end-start)
+    return pred_train, pred_valid, pred_test, scores
 
+# callculate the loss, acc and F1-scores of the input data
 def get_test_loss_acc(net, loss_function, x_data, y_data, test_split=1):
     loss_sum_data = torch.tensor(0)
     true_sum_data = torch.tensor(0)
@@ -413,72 +355,7 @@ def get_test_loss_acc(net, loss_function, x_data, y_data, test_split=1):
     
     return loss, acc, macro_f1
 
-def get_test_loss_acc_dynamic(net, loss_function, x_data, y_data, test_split=1, test_flag=False):
-    loss_sum_data = torch.tensor(0)
-    true_sum_data = torch.tensor(0)
-    output = []
-    torch_dataset = Data.TensorDataset(torch.FloatTensor(x_data), torch.tensor(y_data).long())
-    data_loader = Data.DataLoader(dataset = torch_dataset,
-                                  batch_size = x_data.shape[0] // test_split,
-                                  shuffle = False)
-    for step, (x,y) in enumerate(data_loader):
-        with torch.no_grad():
-            if INFERENCE_DEVICE == 'TEST_CUDA':
-                x = x.cuda() # 这变了
-                y = y.cuda() # 这变了
-            output_bc = net(x, test_flag)[0]
-            if len(output_bc.shape) == 1:
-                output_bc.unsqueeze_(dim=0)
-                
-            out = output_bc.cpu().data.numpy()
-            
-            if INFERENCE_DEVICE == 'TEST_CUDA':
-                pred_bc = torch.max(output_bc, 1)[1].data.cuda().squeeze() # 这变了
-            else:
-                pred_bc = torch.max(output_bc, 1)[1].data.squeeze()
-            loss_bc = loss_function(output_bc, y)
-            true_num_bc = torch.sum(pred_bc == y).data
-            loss_sum_data = loss_sum_data + loss_bc
-            true_sum_data = true_sum_data + true_num_bc
-            
-            output.extend(out)
-    
-    loss = loss_sum_data.data.item()/y_data.shape[0]
-    acc = true_sum_data.data.item()/y_data.shape[0]
-    
-    output = np.array(output).argmax(axis=1)
-    macro_f1 = f1_score(y_data, output, average="macro")
-    
-    return loss, acc, macro_f1
-
-def model_predict(net, x_data, y_data, test_split=1):
-    predict = [] 
-    output = []
-    torch_dataset = Data.TensorDataset(torch.FloatTensor(x_data), torch.tensor(y_data).long())
-    data_loader = Data.DataLoader(dataset = torch_dataset,
-                                  batch_size = x_data.shape[0] // test_split,
-                                  shuffle = False)    
-    for step, (x,y) in enumerate(data_loader):
-        with torch.no_grad():
-            if INFERENCE_DEVICE == 'TEST_CUDA':
-                x = x.cuda() # 这变了
-            ## y = y.cuda() # 这个没用
-            output_bc = net(x)[0]
-            if len(output_bc.shape) == 1:
-                output_bc.unsqueeze_(dim=0)
-            out = output_bc.cpu().data.numpy()
-            # pred_bc = torch.max(output_bc, 1)[1].data.cuda().squeeze()               
-            # pre = pred_bc.cpu().data.numpy()
-            # if pre.size == 1:
-            #     pre = pre.tolist()
-            #     predict.append(pre)
-            # else:
-            #     pre = pre.tolist()
-            #     predict.extend(pre)  
-            output.extend(out)
-    # acc = sum(predict == y_data)/y_data.shape[0]    
-    return output
-
+# save the best val model
 def save_models(net, output_directory_models, 
                 loss_train, loss_train_results, 
                 accuracy_validation, accuracy_validation_results, 
@@ -487,53 +364,8 @@ def save_models(net, output_directory_models,
     output_directory_best_val = output_directory_models+'best_validation_model.pkl'         
     if accuracy_validation >= max(accuracy_validation_results):        
         torch.save(net.state_dict(), output_directory_best_val)
-    
-    # # log training time 
-    # training_duration = time.time() - start_time
-    # training_duration_logs.append(training_duration)
-    
-    # return(training_duration_logs)
 
-# def log_history(EPOCH, lr_results, loss_train_results, accuracy_train_results, 
-#                 loss_validation_results, accuracy_validation_results, output_directory_models):
-    
-#     history = pd.DataFrame(data = np.zeros((EPOCH,5),dtype=np.float), 
-#                            columns=['train_acc','train_loss','val_acc','val_loss','lr'])
-#     history['train_acc'] = accuracy_train_results
-#     history['train_loss'] = loss_train_results
-#     history['val_acc'] = accuracy_validation_results
-#     history['val_loss'] = loss_validation_results
-#     history['lr'] = lr_results
-    
-#     # load saved models, predict, cal metrics and save logs    
-#     history.to_csv(output_directory_models+'history.csv', index=False)
-    
-#     return history
-
-# def plot_learning_history(EPOCH, history, path):
-#     """Plot learning curve
-#     Args:
-#         fit (Any): History object
-#         path (str, default="history.png")
-#     """
-#     fig, (axL, axR) = plt.subplots(ncols=2, figsize=(10, 4))
-#     axL.plot(history["train_loss"], label="train")
-#     axL.plot(history["val_loss"], label="validation")
-#     axL.set_title("Loss")
-#     axL.set_xlabel("epoch")
-#     axL.set_ylabel("loss")
-#     axL.legend(loc="upper right")
-
-#     axR.plot(history["train_acc"], label="train")
-#     axR.plot(history["val_acc"], label="validation")
-#     axR.set_title("Accuracy")
-#     axR.set_xlabel("epoch")
-#     axR.set_ylabel("accuracy")
-#     axR.legend(loc="upper right")
-
-#     fig.savefig(path+'history.png')
-#     plt.close()
-    
+# log the test results in the training process
 def log_history(EPOCH, lr_results, loss_train_results, accuracy_train_results, 
                 loss_validation_results, accuracy_validation_results, loss_test_results, accuracy_test_results,
                 output_directory_models):
@@ -554,6 +386,7 @@ def log_history(EPOCH, lr_results, loss_train_results, accuracy_train_results,
     
     return history
 
+# plot the history results of the training process
 def plot_learning_history(EPOCH, history, path):
     """Plot learning curve
     Args:
@@ -580,6 +413,7 @@ def plot_learning_history(EPOCH, history, path):
     fig.savefig(path+'history.png')
     plt.close()
 
+# save the test results of each loso subject
 def save_metrics_per_cv(score, per_training_duration,
                         subject_id, nb_classes, LABELS,
                         y_true, y_pred,
@@ -662,6 +496,26 @@ def save_metrics_per_cv(score, per_training_duration,
     false_pres['predicted_category'] = pre_false
     false_pres.to_csv(output_directory_models+'score.csv', index=True, mode='a+')
 
+# log the info of datasets and training process
+def log_dataset_training_info(logger, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID, X_train, X_test,
+                              y_train, y_test, cal_attitude_angle, ACT_LABELS, ActID, BATCH_SIZE,
+                              EPOCH, LR, ALL_SUBJECTS_ID, label2act):
+    
+    # log the information of datasets
+    log_dataset_info(logger, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID, X_train, X_test,
+                     y_train, y_test, cal_attitude_angle, ACT_LABELS, ActID)
+    
+    # check the category imbalance
+    nb_classes = len(np.unique(y_train))
+    check_class_balance(logger, y_train.flatten(), y_test.flatten(),
+                        label2act=label2act, n_class=nb_classes)
+    
+    # log the hyper-parameters
+    log_HyperParameters(logger, BATCH_SIZE, EPOCH, LR, len(ALL_SUBJECTS_ID))
+    
+    return nb_classes
+
+# log the info of datasets
 def log_dataset_info(logger, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID, X_train, X_test,
                      y_train, y_test, cal_attitude_angle, ACT_LABELS, ActID):
     logger.debug("---Dataset and preprocessing information---")
@@ -673,10 +527,12 @@ def log_dataset_info(logger, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID, X_train, X_tes
     logger.debug(f"ACT_LABELS = {ACT_LABELS}")
     logger.debug(f"ActID = {ActID}")
 
+# log the info of training hyperparameters
 def log_HyperParameters(logger, BATCH_SIZE, EPOCH, LR, subject_num):
     logger.debug("---HyperParameters---")
     logger.debug(f"BATCH_SIZE : {BATCH_SIZE}, EPOCH : {EPOCH}, LR : {LR}, SUBJECT_NUM : {subject_num}")
 
+# log the info of the dataset and the network
 def log_redivdataset_network_info(logger, subject_id, X_tr, X_val, X_test, Y_tr, Y_val,
                                   y_test, nb_classes, classifier_parameter, classifier):
     if subject_id == 1:
@@ -687,6 +543,7 @@ def log_redivdataset_network_info(logger, subject_id, X_tr, X_val, X_test, Y_tr,
         logger.debug(f"num of network parameter = {classifier_parameter}")
         logger.debug(f"the architecture of the network = {classifier}")
 
+# log the testing results of each subject
 def log_every_SUBJECT_score(logger, log_training_duration, scores, label2act, nb_classes, SUBJECT_NUM):
     for i in range(SUBJECT_NUM):
         # Log Every Subject Scores
@@ -698,17 +555,12 @@ def log_every_SUBJECT_score(logger, log_training_duration, scores, label2act, nb
         for mode in ["train", "valid", "test"]:
             # log the average of "logloss", "accuracy", "precision", "recall", "f1"
             logger.debug(f"---{mode}---")
-            logger.debug(f"logloss={round(scores['logloss'][mode][i])}, accuracy={round(scores['accuracy'][mode][i])}, macro-precision={round(scores['macro-precision'][mode][i])}, macro-recall={round(scores['macro-recall'][mode][i])}, macro-f1={round(scores['macro-f1'][mode][i])}, weighted-f1={round(scores['weighted-f1'][mode][i])}, micro-f1={round(scores['micro-f1'][mode][i])}")
-            # for metric in ["logloss", "accuracy", "macro-precision", "macro-recall", "macro-f1", "weighted-f1", "micro-f1"]:
-            #     logger.debug(f"{metric}={round(np.mean(scores[metric][mode]))}")
-            
-            # # log the average of "per_class_f1"
-            # class_f1_mat = scores["per_class_f1"][mode]
-            # class_f1_result = {}
-            # for class_id in range(nb_classes):
-            #     per_class_f1 = class_f1_mat[i][class_id]
-            #     class_f1_result[label2act[class_id]] = per_class_f1
-            # logger.debug(f"per-class f1={round(class_f1_result)}")
+            logger.debug(f"logloss={round(scores['logloss'][mode][i],4)}, accuracy={round(scores['accuracy'][mode][i],4)},\
+                         macro-precision={round(scores['macro-precision'][mode][i],4)},\
+                         macro-recall={round(scores['macro-recall'][mode][i],4)},\
+                         macro-f1={round(scores['macro-f1'][mode][i],4)},\
+                         weighted-f1={round(scores['weighted-f1'][mode][i],4)},\
+                             micro-f1={round(scores['micro-f1'][mode][i],4)}")
 
 def log_averaged_SUBJECT_scores(logger, log_training_duration, scores, label2act, nb_classes, SUBJECT_NUM):
     # Log Averaged Score of all Subjects
@@ -721,68 +573,11 @@ def log_averaged_SUBJECT_scores(logger, log_training_duration, scores, label2act
         # log the average of "logloss", "accuracy", "precision", "recall", "f1"
         logger.debug(f"---{mode}---")
         for metric in ["logloss", "accuracy", "macro-precision", "macro-recall", "macro-f1", "weighted-f1", "micro-f1"]:
-            logger.debug(f"{metric}={round(np.mean(scores[metric][mode]))} +- {round(np.std(scores[metric][mode]))}")
-        
-        # # log the average of "per_class_f1"
-        # class_f1_mat = scores["per_class_f1"][mode]
-        # class_f1_result = {}
-        # for class_id in range(nb_classes):
-        #     mean_class_f1 = np.mean([class_f1_mat[i][class_id] for i in range(SUBJECT_NUM)])
-        #     class_f1_result[label2act[class_id]] = mean_class_f1
-        # logger.debug(f"per-class f1={round(class_f1_result)}")
+            logger.debug(f"{metric}={round(np.mean(scores[metric][mode]),4)} +- {round(np.std(scores[metric][mode]),4)}")
 
-def log_inference_time(start1, end1, y_train, y_test, time2,
-                       dataset_name, classifier_name, SUBJECT_NUM, logger):
-    time1 = (end1 - start1)/(len(y_train)+len(y_test))
-    time2 = time2/((len(y_train)+len(y_test))*SUBJECT_NUM)
-    # time2 = time2/SUBJECT_NUM
-    logger.debug("---Final Inference Time Per Sample-Averaged over Folds---")
-    logger.debug(f"preprocessing_time={time1}")
-    logger.debug(f"pure_inference_time={time2}")
-    logger.debug(f"single_model_prepro_inference_time={time1+time2}")
-    logger.debug(f"all_model_prepro_inference_time={time1+time2*SUBJECT_NUM}")
-    # dataset_classifier_name = dataset_name + '_' + classifier_name
-    # dataset_classifier_name_log.append(dataset_classifier_name)
-    # time_log.append(time1+time2)
-    # time1_log.append(time1)
-    # time2_log.append(time2)
-    # time_logs = dict(zip(dataset_classifier_name_log, time_log))
-    
-    return time1, time2
-
-def plot_confusion_matrix(
-    cms: Dict[str, np.ndarray],
-    labels: Optional[List[str]] = None,
-    path: str = "confusion_matrix.png",
-) -> None:
-    """Plot confusion matrix"""
-    # Cal the ensembled confusion_matrix by averaging them
-    cms = [np.mean(cms[mode], axis=0) for mode in ["train", "valid", "test"]]
-
-    fig, ax = plt.subplots(ncols=3, figsize=(20, 7))
-    for i, (cm, mode) in enumerate(zip(cms, ["train", "valid", "test"])):
-        sns.heatmap(
-            cm,
-            annot=True,
-            cmap="Blues",
-            square=True,
-            vmin=0,
-            vmax=1.0,
-            xticklabels=labels,
-            yticklabels=labels,
-            ax=ax[i],
-        )
-        ax[i].set_xlabel("Predicted label")
-        ax[i].set_ylabel("True label")
-        ax[i].set_title(f"Averaged confusion matrix - {mode}")
-
-    plt.tight_layout()
-    fig.savefig(path)
-    plt.close()
-    
+# save test results to csv tables
 def save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_name,
-                                scores, ALL_SUBJECTS_ID, preprocess_time, inference_time,
-                                SUBJECT_NUM):
+                                scores, ALL_SUBJECTS_ID, SUBJECT_NUM):
     
     for i in range(len(CLASSIFIERS)):
         if i == 0:
@@ -792,18 +587,15 @@ def save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_nam
     classifiers_comparison_log_dir = MODELS_COMP_LOG_DIR + CLASSIFIERS_names + '-comparison' + '.csv'
     
     # record Averaged_SUBJECT_scores
-    averaged_score_pd = pd.DataFrame(data = np.zeros((7, 1),dtype=np.str_),
+    averaged_score_pd = pd.DataFrame(data = np.zeros((6, 1),dtype=np.str_),
                                      index=["accuracy","macro-precision",
                                             "macro-recall","macro-f1",
-                                            "weighted-f1", "micro-f1", "inference-time"], 
+                                            "weighted-f1", "micro-f1"], 
                                      columns=[classifier_name])
     for row in averaged_score_pd.index:
         for column in averaged_score_pd.columns:
-            if row != "inference-time":
-                averaged_score_pd.loc[row][column] = np.str_(np.mean(scores[row]["test"])) + '+-' + np.str_(np.std(scores[row]["test"]))
-            else:
-                averaged_score_pd.loc[row][column] = np.str_(preprocess_time + inference_time)
-    
+            averaged_score_pd.loc[row][column] = np.str_(np.mean(scores[row]["test"])) + '+-' + np.str_(np.std(scores[row]["test"]))
+
     # record Every_SUBJECT_scores
     for subject_id in ALL_SUBJECTS_ID:
             # record Averaged_SUBJECT_scores
@@ -836,7 +628,7 @@ def save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_nam
 
     else:
         # add averaged_scores of new classifier
-        saved_averaged_scores  = pd.read_csv(classifiers_comparison_log_dir, skiprows=1, nrows=7, header=0, index_col=0)
+        saved_averaged_scores  = pd.read_csv(classifiers_comparison_log_dir, skiprows=1, nrows=6, header=0, index_col=0)
         saved_averaged_scores  = pd.concat([saved_averaged_scores, averaged_score_pd], axis=1)
         # add every_subject_scores of new classifier
         saved_everysub_scores = pd.read_csv(classifiers_comparison_log_dir, skiprows=10, nrows=3*len(ALL_SUBJECTS_ID), header=0, index_col=0)
@@ -850,7 +642,18 @@ def save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_nam
         # save Every_SUBJECT_scores to CSV
         pd.DataFrame(["Every_SUBJECT_scores"]).to_csv(classifiers_comparison_log_dir, index=False, header = False, mode='a+')
         saved_everysub_scores.to_csv(classifiers_comparison_log_dir, index=True, mode='a+')
-    
+
+# log the test scores, save to csv tables
+def log_test_results(logger, log_training_duration, scores, label2act, nb_classes, ALL_SUBJECTS_ID,
+                     MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_name):
+    # Log the Test Scores of every subject
+    log_every_SUBJECT_score(logger, log_training_duration, scores, label2act, nb_classes, len(ALL_SUBJECTS_ID))
+    # Log the averaged Score of different subjects
+    log_averaged_SUBJECT_scores(logger, log_training_duration, scores, label2act, nb_classes, len(ALL_SUBJECTS_ID))
+    # save to tables
+    save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_name,
+                                scores, ALL_SUBJECTS_ID, len(ALL_SUBJECTS_ID))
+
 class LabelSmoothingCrossEntropy(nn.Module):
     def __init__(self):
         super(LabelSmoothingCrossEntropy, self).__init__()
