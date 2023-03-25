@@ -1,19 +1,6 @@
 import os
 import numpy as np
 import argparse
-# hyper-parameters
-# BATCH_SIZE = 128
-# EPOCH      = 1
-# LR         = 0.0005
-# # mode selection
-# INFERENCE_DEVICE = 'TEST_CUDA' # DEVICE: 'TEST_CUDA' or 'TEST_CPU'
-# PATTERN          = 'TRAIN' # 'TRAIN' or 'TEST'
-# DATASETS    = ['HAPT','Opportunity']
-# DATASETS    = ['HAPT']
-# # CLASSIFIERS = ['If_ConvTransformer_W_torch'] # LR 0.0001, 64
-# CLASSIFIERS = ['If_ConvTransformer_torch'] # LR 0.0001, 64
-# cal_attitude_angle = True
-# test_split = 3 # when testing, the testing dataset is seperated into 'test_split' pieces
 
 def parse_args():
     # The training options
