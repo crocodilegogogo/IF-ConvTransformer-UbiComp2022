@@ -31,7 +31,7 @@ This paper proposes an HAR framework composed of an IMU fusion block and a ConvT
 
 ## Prerequisite
 
-Tested on Windows 10  , with Python 3.6, PyTorch 1.1, CUDA 10.0, and 1x NVIDIA 2080Ti.
+Tested on Windows 10, with Python 3.6, PyTorch 1.1, CUDA 10.0, and 1x NVIDIA 2080Ti.
 
 ## Usage
 
