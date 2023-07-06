@@ -1,7 +1,4 @@
 import os
-# import sys
-# from typing import Any, Dict, List
-
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -20,14 +17,14 @@ class Trainer(object):
         # Initial
         self.args  = args
 
-        for dataset_name in [args.DATASETS]:
+        for dataset_name in args.DATASETS:
             
             # get the raw data for loso
             label2act, ACT_LABELS, ActID, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID,\
                    MODELS_COMP_LOG_DIR, INPUT_CHANNEL, POS_NUM,\
                    All_data, All_labels, All_users, ALL_SUBJECTS_ID = get_raw_data(args, dataset_name, CUR_DIR)
             
-            for classifier_name in [args.CLASSIFIERS]:
+            for classifier_name in args.CLASSIFIERS:
                 
                 # logging settings
                 EXEC_TIME, LOG_DIR, MODEL_DIR, logger = logging_settings(classifier_name, CUR_DIR, dataset_name)
@@ -98,7 +95,7 @@ class Trainer(object):
                 
                 ################## LOG TEST RESULTS, SAVE TO TABLES ###################
                 log_test_results(logger, log_training_duration, scores, label2act, nb_classes, ALL_SUBJECTS_ID,
-                                 MODELS_COMP_LOG_DIR, [args.CLASSIFIERS], classifier_name)
+                                 MODELS_COMP_LOG_DIR, args.CLASSIFIERS, classifier_name)
                 #######################################################################
                 
 

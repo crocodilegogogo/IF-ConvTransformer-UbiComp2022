@@ -1,26 +1,22 @@
 """Collection of utility functions"""
 from datetime import datetime
-from logging import basicConfig, getLogger, Formatter, FileHandler, StreamHandler, DEBUG, WARNING
-from decimal import Decimal, ROUND_HALF_UP
+from logging import getLogger, Formatter, FileHandler, StreamHandler, DEBUG, WARNING
 from collections import Counter
 import os
-import sys
 from typing import Any, Dict, List, Optional, Tuple
-# from utils.constants import INFERENCE_DEVICE
-from utils.constants import parse_args
-args = parse_args()
-INFERENCE_DEVICE = args.INFERENCE_DEVICE
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-# import seaborn as sns
-import shap
+# import shap
 import torch
 import torch.nn as nn
 import torch.utils.data as Data
 import time
 import torch.nn.functional as F
+
+from utils.constants import parse_args
+args = parse_args()
+INFERENCE_DEVICE = args.INFERENCE_DEVICE
 from utils.constants import *
 from utils.load_HAPT_dataset.load_HAPT_dataset import load_HAPT_raw_data
 from utils.load_Opportunity_dataset.load_Opportunity_dataset import load_Opportunity_data
@@ -34,7 +30,7 @@ from sklearn.metrics import (
     recall_score,
 )
 
-shap.initjs()
+# shap.initjs()
 logger = getLogger(__name__)
 
 # load raw training and testing data of each dataset

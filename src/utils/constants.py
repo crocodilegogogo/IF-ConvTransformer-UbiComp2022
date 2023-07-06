@@ -8,15 +8,15 @@ def parse_args():
       
       parser.add_argument('--PATTERN', type=str, default='TRAIN',
                           help='pattern: TRAIN, TEST')
-      parser.add_argument('--DATASETS', type=str, default='Opportunity',
+      parser.add_argument('--DATASETS', nargs='+', default=['Opportunity'],
                           help='dataset name: HAPT, Opportunity')
-      parser.add_argument('--CLASSIFIERS', type=str, default='If_ConvTransformer_W_torch',
+      parser.add_argument('--CLASSIFIERS', nargs='+', default=['If_ConvTransformer_W_torch'],
                           help='classifier name: If_ConvTransformer_torch, If_ConvTransformer_W_torch')
-      parser.add_argument('--BATCH_SIZE', type=int, default=128,
+      parser.add_argument('--BATCH_SIZE', type=int, default=64,
                           help='training batch size: Oppo: 64 HAPT: 128')
-      parser.add_argument('--EPOCH', type=int, default=1,
+      parser.add_argument('--EPOCH', type=int, default=100,
                           help='training epoches: HAPT: 30, Oppo: 100')
-      parser.add_argument('--LR', type=float, default=0.0002,
+      parser.add_argument('--LR', type=float, default=0.0005,
                           help='learning rate: HAPT: 0.0002, Oppo: 0.0005')
       parser.add_argument('--cal_attitude_angle', type=bool, default=True,
                           help='correct the rotation angle')
