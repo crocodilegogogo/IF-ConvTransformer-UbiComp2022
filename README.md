@@ -1,4 +1,4 @@
-# If-ConvTransformer
+# IF-ConvTransformer
 This is the project of manuscript If-ConvTransformer: A Framework for Human Activity Recognition Using IMU Fusion and ConvTransformer, Ye Zhang, Longguang Wang, Huiling Chen, et. al, IMWUT/UbiComp 2022 [[Paper]](https://dl.acm.org/doi/pdf/10.1145/3534584). **Our team will release more interesting works and applications on sensor based time series (including HAR) soon. Please keep following our repository.**
 
 ![architechture](If_ConvTransformer_archi.png)
