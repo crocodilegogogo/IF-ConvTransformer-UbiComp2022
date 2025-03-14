@@ -137,7 +137,7 @@ def create_directory(directory_path):
 # create the directory of the training model
 def create_model_direc(MODEL_DIR, PATTERN, subject_id):
     
-    output_directory_models = MODEL_DIR+'\SUBJECT_'+str(subject_id)+'\\'
+    output_directory_models = os.path.join(MODEL_DIR, 'SUBJECT_'+str(subject_id))
     flag_output_directory_models = create_directory(output_directory_models)
     if PATTERN == 'TRAIN':
         flag_output_directory_models = PATTERN
@@ -256,7 +256,7 @@ def predict_tr_val_test(network, nb_classes, LABELS,
     # generate network objects
     network_obj = network
     # load best saved validation models
-    best_validation_model = output_directory_models+'best_validation_model.pkl'
+    best_validation_model = os.path.join(output_directory_models, 'best_validation_model.pkl')
     network_obj.load_state_dict(torch.load(best_validation_model))
     network_obj.eval()
     # get outputs of best saved validation models by concat them, input: train_x, val_x, test_x
@@ -357,7 +357,7 @@ def save_models(net, output_directory_models,
                 accuracy_validation, accuracy_validation_results, 
                 start_time, training_duration_logs):   
     
-    output_directory_best_val = output_directory_models+'best_validation_model.pkl'         
+    output_directory_best_val = os.path.join(output_directory_models, 'best_validation_model.pkl')
     if accuracy_validation >= max(accuracy_validation_results):        
         torch.save(net.state_dict(), output_directory_best_val)
 
@@ -378,7 +378,7 @@ def log_history(EPOCH, lr_results, loss_train_results, accuracy_train_results,
     history['lr'] = lr_results
     
     # load saved models, predict, cal metrics and save logs    
-    history.to_csv(output_directory_models+'history.csv', index=False)
+    history.to_csv(os.path.join(output_directory_models, 'history.csv'), index=False)
     
     return history
 
@@ -406,7 +406,7 @@ def plot_learning_history(EPOCH, history, path):
     axR.set_ylabel("accuracy")
     axR.legend(loc="upper right")
 
-    fig.savefig(path+'history.png')
+    fig.savefig(os.path.join(path, 'history.png'))
     plt.close()
 
 # save the test results of each loso subject
@@ -419,7 +419,7 @@ def save_metrics_per_cv(score, per_training_duration,
     per_training_duration_pd = pd.DataFrame(data = per_training_duration,
                                             index = ["training duration"],
                                             columns = ["SUBJECT_"+str(subject_id)])
-    per_training_duration_pd.to_csv(output_directory_models+'score.csv', index=True)
+    per_training_duration_pd.to_csv(os.path.join(output_directory_models, 'score.csv'), index=True)
     
     # save "logloss", "accuracy", "precision", "recall", "f1"
     score_pd = pd.DataFrame(data = np.zeros((7,3),dtype=np.float),
@@ -429,10 +429,10 @@ def save_metrics_per_cv(score, per_training_duration,
     for row in score_pd.index:
         for column in score_pd.columns:
             score_pd.loc[row, column] = score[row][column][0]
-    score_pd.to_csv(output_directory_models+'score.csv', index=True, mode='a+')
+    score_pd.to_csv(os.path.join(output_directory_models, 'score.csv'), index=True, mode='a+')
     
     # save "per_class_f1"
-    pd.DataFrame(["per_class_f1"]).to_csv(output_directory_models+'score.csv', index=False, header=False, mode='a+')
+    pd.DataFrame(["per_class_f1"]).to_csv(os.path.join(output_directory_models, 'score.csv'), index=False, header=False, mode='a+')
     per_class_f1_pd = pd.DataFrame(data = np.zeros((3, nb_classes),dtype=np.str_),
                             index=["train", "valid", "test"], columns=LABELS)
     for row in per_class_f1_pd.index:
@@ -448,11 +448,11 @@ def save_metrics_per_cv(score, per_training_duration,
             for (i, column) in enumerate(per_class_f1_pd.columns):
                 per_class_f1_pd.loc[row, column] = score["per_class_f1"][row][0][i]
             
-    per_class_f1_pd.to_csv(output_directory_models+'score.csv', index=True, mode='a+')
+    per_class_f1_pd.to_csv(os.path.join(output_directory_models, 'score.csv'), index=True, mode='a+')
     
     # save confusion_matrix
     for key in score['confusion_matrix'].keys():
-        pd.DataFrame(["confusion_matrix_"+key]).to_csv(output_directory_models+'score.csv', index=False, header=False, mode='a+')
+        pd.DataFrame(["confusion_matrix_"+key]).to_csv(os.path.join(output_directory_models, 'score.csv'), index=False, header=False, mode='a+')
         each_confusion_matrix = pd.DataFrame(data = np.zeros((nb_classes, nb_classes),dtype=np.float), 
                                              index = LABELS, columns=LABELS)
         # if missing categories exist
@@ -478,7 +478,7 @@ def save_metrics_per_cv(score, per_training_duration,
             for (i,row) in enumerate(each_confusion_matrix.index):
                 for (j,column) in enumerate(each_confusion_matrix.columns):
                     each_confusion_matrix.loc[row, column] = score['confusion_matrix'][key][0][i][j]
-        each_confusion_matrix.to_csv(output_directory_models+'score.csv', index=True, mode='a+')
+        each_confusion_matrix.to_csv(os.path.join(output_directory_models, 'score.csv'), index=True, mode='a+')
     
     # save the indexes of the false predictions
     y_pred = y_pred.argmax(axis=1)
@@ -490,7 +490,7 @@ def save_metrics_per_cv(score, per_training_duration,
     false_pres['index'] = false_index
     false_pres['real_category'] = y_correct
     false_pres['predicted_category'] = pre_false
-    false_pres.to_csv(output_directory_models+'score.csv', index=True, mode='a+')
+    false_pres.to_csv(os.path.join(output_directory_models, 'score.csv'), index=True, mode='a+')
 
 # log the info of datasets and training process
 def log_dataset_training_info(logger, TRAIN_SUBJECTS_ID, TEST_SUBJECTS_ID, X_train, X_test,
@@ -580,7 +580,7 @@ def save_classifiers_comparison(MODELS_COMP_LOG_DIR, CLASSIFIERS, classifier_nam
             CLASSIFIERS_names = CLASSIFIERS[0]+'&'
         else:
             CLASSIFIERS_names = CLASSIFIERS_names+CLASSIFIERS[i]+'&'
-    classifiers_comparison_log_dir = MODELS_COMP_LOG_DIR + CLASSIFIERS_names + '-comparison' + '.csv'
+    classifiers_comparison_log_dir = os.path.join(MODELS_COMP_LOG_DIR, CLASSIFIERS_names + '-comparison' + '.csv')
     
     # record Averaged_SUBJECT_scores
     averaged_score_pd = pd.DataFrame(data = np.zeros((6, 1),dtype=np.str_),

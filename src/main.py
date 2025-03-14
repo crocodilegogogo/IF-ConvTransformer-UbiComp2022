@@ -8,7 +8,7 @@ from utils.utils import *
 import time
 
 os.environ["CUDA_DEVICE_ORDER"]    = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))  # Path to current directory
 
 class Trainer(object):
@@ -78,7 +78,7 @@ class Trainer(object):
                     else:
                         print('Already_done: '+'SUBJECT_'+str(subject_id))
                         # read the training duration of current subject
-                        per_training_duration = pd.read_csv(output_directory_models+'score.csv',
+                        per_training_duration = pd.read_csv(os.path.join(output_directory_models, 'score.csv'),
                                                             skiprows=1, nrows=1, header = None)[1][0]
                         log_training_duration.append(per_training_duration)
                     ###################################################################

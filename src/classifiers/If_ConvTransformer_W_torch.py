@@ -127,7 +127,6 @@ class TransformerBlock(nn.Module):
         super(TransformerBlock, self).__init__()
 
         self.attention = SelfAttention(k, heads = heads, drop_rate = drop_rate)
-        # self.norm1 = nn.LayerNorm(k)
         self.norm1 = nn.BatchNorm1d(k)
 
         self.mlp = nn.Sequential(
@@ -135,7 +134,6 @@ class TransformerBlock(nn.Module):
             nn.ReLU(),
             nn.Linear(4*k, k)
         )
-        # self.norm2 = nn.LayerNorm(k)
         self.norm2 = nn.BatchNorm1d(k)
         self.dropout_forward = nn.Dropout(drop_rate)
 
@@ -145,9 +143,8 @@ class TransformerBlock(nn.Module):
         attended = self.attention(x)
         attended = attended + x
         attended = attended.permute(0,2,1)
-        # perform layer norm
         x = self.norm1(attended).permute(0,2,1)
-        # feedforward and layer norm
+        # feedforward
         feedforward = self.mlp(x)
         
         feedforward = feedforward + x
@@ -558,7 +555,7 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     # loss_function = LabelSmoothingCrossEntropy()
     
     # save init model    
-    output_directory_init = output_directory_models+'init_model.pkl'
+    output_directory_init = os.path.join(output_directory_models, 'init_model.pkl')
     torch.save(network.state_dict(), output_directory_init)   # save only the init parameters
     
     training_duration_logs = []
@@ -658,7 +655,7 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     log_training_duration.append(per_training_duration)
     
     # save last_model
-    output_directory_last = output_directory_models+'last_model.pkl'
+    output_directory_last = os.path.join(output_directory_models, 'last_model.pkl')
     torch.save(network.state_dict(), output_directory_last)   # save only the init parameters
     
     # log history

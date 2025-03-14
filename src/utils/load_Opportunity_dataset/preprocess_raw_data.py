@@ -12,26 +12,6 @@ import pandas as pd
 from typing import Optional, Tuple
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-# separate_gravity_flag = True
-# cal_attitude_angle    = True
-# scaler                = "normalize"
-# window_size           = 400
-# overlap               = 200
-# TRAIN_SUBJECTS        = [1, 2, 3, 4, 6, 7, 8]
-
-# read_data_dir = 'Per_subject_npy'
-
-# dataList = os.listdir(read_data_dir)
-
-# gtType = ["bike", "sit", "stand", "walk", "stairsup", "stairsdown"]
-# idxList = range(len(gtType))
-# gtIdxDict = dict(zip(gtType, idxList))
-# idxGtDict = dict(zip(idxList, gtType))
-
-# ACT_LABELS    = ["a","b","c","d","e","f","g","h","i"]
-# id_sub_List = range(len(subjects))
-# subIdxDict  = dict(zip(subjects, id_sub_List))
-
 def preprocess_signal(signal: pd.DataFrame, window_size, overlap) -> pd.DataFrame:
     _signal = signal.copy()
     of = Preprocess()
@@ -210,9 +190,5 @@ def preprocess_raw_data(DATA_DIR, SUBJECTS, TRIALS, SELEC_LABEL,
                         X_test         = np.vstack((X_test, cur_label_segments_mid))
                         Y_test         = Y_test + cur_label_y_labels
                         User_ids_test  = User_ids_test + cur_label_sub_labels
-    # X_train = np.swapaxes(X_train,1,2)
-    # X_train = np.expand_dims(X_train, 1)
-    # X_test  = np.swapaxes(X_test,1,2)
-    # X_test  = np.expand_dims(X_test,  1)
 
     return X_train, X_test, Y_train, Y_test, User_ids_train, User_ids_test

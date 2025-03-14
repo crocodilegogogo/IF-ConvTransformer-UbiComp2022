@@ -8,10 +8,6 @@ import pandas as pd
 from utils.load_Opportunity_dataset.preprocess_raw_data import preprocess_raw_data
 # from preprocess_raw_data import preprocess_raw_data
 
-# CUR_DIR = os.path.dirname(os.path.abspath(__file__))  # Path to current directory
-# # DATA_DIR = os.path.join(CUR_DIR, "../../data")
-# DATA_DIR = CUR_DIR
-
 
 def load_Opportunity_data(DATA_DIR, SUBJECTS, TRIALS, SELEC_LABEL, 
                           TRAIN_SUBJECTS_ID, TRAIN_SUBJECTS_TRIAL_ID, ACT_LABELS, ACT_ID,
@@ -52,20 +48,3 @@ def load_Opportunity_data(DATA_DIR, SUBJECTS, TRIALS, SELEC_LABEL,
     
     return np.expand_dims(X_train, axis=1), np.expand_dims(X_test, axis=1), y_train.squeeze(), y_test.squeeze(), \
            np.array(User_ids_train), np.array(User_ids_test), label2act, act2label
-
-# SUBJECTS                = [1,2,3,4]
-# TRIALS                  = [1,2,3,4,5]
-# SELEC_LABEL             = 'MID_LABEL_COL' # 'LOCO_LABEL_COL', 'MID_LABEL_COL', 'HI_LABEL_COL'
-# TRAIN_SUBJECTS_ID       = [1]
-# TRAIN_SUBJECTS_TRIAL_ID = [1,2,3,4,5]
-# window_size             = 24
-# overlap                 = 12
-# separate_gravity_flag   = True
-# cal_attitude_angle      = True
-# to_NED_flag             = True
-
-# X_train, X_test, y_train, y_test, label2act, act2label = load_Opportunity_data(DATA_DIR, SUBJECTS, TRIALS, SELEC_LABEL,
-#                                                                                 TRAIN_SUBJECTS_ID, TRAIN_SUBJECTS_TRIAL_ID, 
-#                                                                                 window_size, overlap,
-#                                                                                 separate_gravity_flag, cal_attitude_angle,
-#                                                                                 to_NED_flag)

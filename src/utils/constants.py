@@ -8,19 +8,19 @@ def parse_args():
       
       parser.add_argument('--PATTERN', type=str, default='TRAIN',
                           help='pattern: TRAIN, TEST')
-      parser.add_argument('--DATASETS', nargs='+', default=['Opportunity'],
+      parser.add_argument('--DATASETS', nargs='+', default=['HAPT'],
                           help='dataset name: HAPT, Opportunity')
-      parser.add_argument('--CLASSIFIERS', nargs='+', default=['If_ConvTransformer_W_torch'],
+      parser.add_argument('--CLASSIFIERS', nargs='+', default=['If_ConvTransformer_torch'],
                           help='classifier name: If_ConvTransformer_torch, If_ConvTransformer_W_torch')
-      parser.add_argument('--BATCH_SIZE', type=int, default=64,
+      parser.add_argument('--BATCH_SIZE', type=int, default=128,
                           help='training batch size: Oppo: 64 HAPT: 128')
-      parser.add_argument('--EPOCH', type=int, default=100,
+      parser.add_argument('--EPOCH', type=int, default=30,
                           help='training epoches: HAPT: 30, Oppo: 100')
-      parser.add_argument('--LR', type=float, default=0.0005,
+      parser.add_argument('--LR', type=float, default=0.0002,
                           help='learning rate: HAPT: 0.0002, Oppo: 0.0005')
       parser.add_argument('--cal_attitude_angle', type=bool, default=True,
                           help='correct the rotation angle')
-      parser.add_argument('--test_split', type=int, default=50,
+      parser.add_argument('--test_split', type=int, default=30,
                           help='the testing dataset is seperated into test_split pieces in the inference process')
       parser.add_argument('--INFERENCE_DEVICE', type=str, default='TEST_CUDA',
                           help='inference device: TEST_CUDA, TEST_CPU')
@@ -31,8 +31,8 @@ def parse_args():
 def get_HAPT_dataset_param(CUR_DIR, dataset_name):
     
     (filepath, _) = os.path.split(CUR_DIR)
-    DATA_DIR = filepath + '\\dataset\\UCI HAPT\\HAPT_Dataset\\'
-    MODELS_COMP_LOG_DIR = CUR_DIR + '\\logs\\'+ dataset_name +'\\classifiers_comparison\\'
+    DATA_DIR = os.path.join(filepath, 'dataset', 'UCI HAPT', 'HAPT_Dataset')
+    MODELS_COMP_LOG_DIR = os.path.join(CUR_DIR, 'logs', dataset_name, 'classifiers_comparison')
     ACT_LABELS = ["WALKING", "WALKING_UPSTAIRS", "WALKING_DOWNSTAIRS", 
                   "SITTING", "STANDING", "LAYING", 
                   "STAND_TO_SIT", "SIT_TO_STAND", "SIT_TO_LIE",
@@ -55,8 +55,8 @@ def get_HAPT_dataset_param(CUR_DIR, dataset_name):
 def get_Opportunity_dataset_param(CUR_DIR, dataset_name):
     
     (filepath, _)       = os.path.split(CUR_DIR)
-    DATA_DIR            = filepath + '\\dataset\\Opportunity\\'
-    MODELS_COMP_LOG_DIR = CUR_DIR + '\\logs\\'+ dataset_name +'\\classifiers_comparison\\'
+    DATA_DIR            = os.path.join(filepath, 'dataset', 'Opportunity')
+    MODELS_COMP_LOG_DIR = os.path.join(CUR_DIR, 'logs', dataset_name, 'classifiers_comparison')
     SUBJECTS                = [1,2,3,4]
     TRIALS                  = [1,2,3,4,5]
     SELEC_LABEL             = 'MID_LABEL_COL' # 'LOCO_LABEL_COL', 'MID_LABEL_COL', 'HI_LABEL_COL'

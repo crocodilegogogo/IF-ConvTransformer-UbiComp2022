@@ -86,28 +86,32 @@ class SelfAttention(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, k, heads, drop_rate):
         super(TransformerBlock, self).__init__()
-
+        
         self.attention = SelfAttention(k, heads = heads, drop_rate = drop_rate)
-        self.norm1 = nn.LayerNorm(k)
+        self.norm1 = nn.BatchNorm1d(k)
 
         self.mlp = nn.Sequential(
             nn.Linear(k, 4*k),
             nn.ReLU(),
             nn.Linear(4*k, k)
         )
-        self.norm2 = nn.LayerNorm(k)
+        
+        self.norm2 = nn.BatchNorm1d(k)
         self.dropout_forward = nn.Dropout(drop_rate)
 
     def forward(self, x):
         
-        # perform self-attention
         attended = self.attention(x)
-        # perform layer norm
-        x = self.norm1(attended + x)
+        attended = attended + x
+        attended = attended.permute(0,2,1)
+        x = self.norm1(attended).permute(0,2,1)
+        
         # feedforward and layer norm
         feedforward = self.mlp(x)
         
-        return self.dropout_forward(self.norm2(feedforward + x))
+        feedforward = feedforward + x
+        feedforward = feedforward.permute(0,2,1)
+        return self.dropout_forward(self.norm2(feedforward).permute(0,2,1))
 
 class Chomp2d(nn.Module):
     def __init__(self, chomp_size):
@@ -366,7 +370,7 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     loss_function = LabelSmoothingCrossEntropy()
     
     # save init model    
-    output_directory_init = output_directory_models+'init_model.pkl'
+    output_directory_init = os.path.join(output_directory_models, 'init_model.pkl')
     torch.save(network.state_dict(), output_directory_init)   # only save the init parameters
     
     training_duration_logs = []
@@ -445,7 +449,7 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     log_training_duration.append(per_training_duration)
     
     # save last_model
-    output_directory_last = output_directory_models+'last_model.pkl'
+    output_directory_last = os.path.join(output_directory_models, 'last_model.pkl')
     torch.save(network.state_dict(), output_directory_last)   # save only the init parameters
     
     # log history
