@@ -361,8 +361,10 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     macro_f1_test_results       = []
     
     # prepare optimizer&scheduler&loss_function
-    parameters = ContiguousParams(network.parameters())
-    optimizer = torch.optim.Adam(parameters.contiguous(),lr = LR)
+    # parameters = ContiguousParams(network.parameters())
+    # optimizer = torch.optim.Adam(parameters.contiguous(),lr = LR)
+    parameters = network.parameters()
+    optimizer = torch.optim.Adam(parameters,lr = LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, 
                                                            patience=5,
                                                            min_lr=LR/10, verbose=True)
@@ -376,13 +378,6 @@ def train_op(network, EPOCH, BATCH_SIZE, LR,
     training_duration_logs = []
     start_time = time.time()
     for epoch in range (EPOCH):
-        
-        epoch_tau = epoch+1
-        tau = max(1 - (epoch_tau - 1) / 50, 0.5)
-        for m in network.modules():
-            if hasattr(m, '_update_tau'):
-                m._update_tau(tau)
-                # print(a)
         
         for step, (x,y) in enumerate(train_loader):
             
